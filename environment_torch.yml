@@ -1,4 +1,4 @@
-name: nf_iseg_benchmark_torch
+name: nf_iseg_benchmark_torch_private
 channels:
   - conda-forge
   - defaults
