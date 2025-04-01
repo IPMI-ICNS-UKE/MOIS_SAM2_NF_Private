@@ -18,14 +18,8 @@ from evaluation.utils.image_cache import ImageCache
 from hydra import initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from sam2.build_sam import build_sam2_video_predictor
-# Importing SimpleClick from the forked repository folder
-from model_code.SimpleClick_Neurofibroma.isegm.inference import utils
-from model_code.SimpleClick_Neurofibroma.isegm.inference import clicker as clk
-from model_code.SimpleClick_Neurofibroma.isegm.inference.predictors import get_predictor
-# Importing STCN for SimpleClick 3D from the forked repository folder
-from model_code.iSegFormer_Neurofibroma.maskprop.Med_STCN.model.eval_network import STCN
-from model_code.iSegFormer_Neurofibroma.maskprop.Med_STCN.inference_core import InferenceCore
-from model_code.iSegFormer_Neurofibroma.maskprop.Med_STCN.util.tensor_util import unpad
+from sam2.build_mois_sam import build_mois_sam2_predictor
+
 
 logger = logging.getLogger("evaluation_pipeline_logger")
 
@@ -283,259 +277,134 @@ class SAM2Network(nn.Module):
         output = torch.Tensor(output).unsqueeze(0).unsqueeze(0)
         return output.to(self.device)
 
-
-class SimpleClick3DNetwork(nn.Module):
-    """
-    Implements a hybrid 3D interactive segmentation framework using SimpleClick for 2D segmentation 
-    and STCN (Space-Time Correspondence Network) for 3D propagation.
-
-    This model is designed to process volumetric medical images interactively, refining segmentation 
-    based on user clicks and propagating corrections through adjacent slices.
-
-    **NOTE:** This model is still under development and may not work properly.
-
-    Attributes:
-        simpleclick_path (str): Path to the pre-trained SimpleClick model.
-        stcn_path (str): Path to the STCN propagation model.
-        device (torch.device): Computational device (`cuda` or `cpu`).
-        threshold (float): Threshold for binarizing SimpleClick predictions.
-        memory_freq (int): Frequency of memory updates in STCN.
-        include_last (bool): Whether to include the last frame in STCN propagation.
-        top_k (int): Number of top features to retain in STCN.
-        patch_size (Tuple[int, int, int]): Patch size for sliding window inference.
-        overlap (float): Overlap percentage for patch-wise inference.
-        sw_batch_size (int): Batch size for sliding window inference.
-
-    Args:
-        simpleclick_path (str): Path to the SimpleClick model file.
-        stcn_path (str): Path to the STCN model file.
-        device (str): Computational device (`cuda` or `cpu`).
-        simple_click_threshold (float, optional): Threshold for binarizing SimpleClick outputs. Default is `0.5`.
-        stcn_memory_freq (int, optional): Memory update frequency in STCN. Default is `1`.
-        stcn_include_last (bool, optional): Whether to include the last frame in STCN propagation. Default is `True`.
-        stcn_top_k (int, optional): Number of top features to retain in STCN. Default is `20`.
-        stcn_patch_size (Tuple[int, int, int], optional): Patch size for sliding window inference. Default is `(480, 480, 32)`.
-        stcn_overlap (float, optional): Overlap percentage for patch inference. Default is `0.25`.
-        stcn_sw_batch_size (int, optional): Batch size for patch inference. Default is `1`.
-    """
+class MOIS_SAM2Network(nn.Module):
     def __init__(self, 
-                 simpleclick_path, 
-                 stcn_path, 
-                 device,
-                 simple_click_threshold=0.5, 
-                 stcn_memory_freq=1, 
-                 stcn_include_last=True, 
-                 stcn_top_k=20,
-                 stcn_patch_size=(480, 480, 32),
-                 stcn_overlap=0.25,
-                 stcn_sw_batch_size=1
+                 model_path, 
+                 config_path, 
+                 cache_path, 
+                 device, 
+                 exemplar_use_com,
+                 exemplar_inference_all_slices,
+                 exemplar_num
                  ):
-        """
-        Initializes the `SimpleClick3DNetwork` model.
-        """
         super().__init__()
-        logger.info("The SimpleClick model is still under development and does not work properly yet!!!")
-        self.simpleclick_path = simpleclick_path
-        self.stcn_path = stcn_path
+        self.image_cache = ImageCache(cache_path)
+        self.image_cache.monitor()
+        model_dir = os.path.dirname(model_path)
+        self.model_path = model_path
+        self.config_name = os.path.basename(config_path)
+        self.config_path = config_path 
         self.device = device
-        self.threshold = simple_click_threshold
-        self.memory_freq = stcn_memory_freq
-        self.include_last = stcn_include_last
-        self.top_k = stcn_top_k
-        self.patch_size = stcn_patch_size
-        self.overlap = stcn_overlap
-        self.sw_batch_size = stcn_sw_batch_size
         
-    def run_simple_click_2d(self, image, prev_prediction, point_coords, point_labels, ground_truth_slice):
-        """
-        Performs 2D interactive segmentation using SimpleClick.
-
-        Args:
-            image (torch.Tensor): 2D image tensor of shape `(1, 3, H, W)`.
-            prev_prediction (torch.Tensor): Previous segmentation prediction `(1, 1, H, W)`.
-            point_coords (list): List of user click coordinates.
-            point_labels (list): List of corresponding labels for the points.
-            ground_truth_slice (torch.Tensor): Ground truth segmentation slice `(1, 1, H, W)`.
-
-        Returns:
-            torch.Tensor: Updated segmentation mask `(1, 1, H, W)`.
-        """
-        # image - torch.Size([1, 3, 1024, 1024])
-        # prev_prediction - torch.Size([1, 1, 1024, 1024])
-        # point_coords - [[437, 718], ...]
-        # [1, ...]
+        self.exemplar_use_com = exemplar_use_com
+        self.exemplar_inference_all_slices = exemplar_inference_all_slices
+        self.exemplar_num = exemplar_num
         
-        # Convert tensors to numpy for processing
-        image_np = image.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8)  # [1024, 1024, 3]
-        # image_np = np.moveaxis(image_np, 0, 1)
-        # image_np = np.flip(image_np, axis=0)
-        # image_np = np.flip(image_np, axis=1)
+        GlobalHydra.instance().clear()
+        initialize_config_dir(config_dir=model_dir)
         
-        # gt_np = ground_truth_slice.squeeze(0).permute(1, 2, 0).cpu().numpy().astype(np.uint8) *255 # [1024, 1024, 1]
-        # gt_np = np.moveaxis(gt_np, 0, 1)
-        # gt_np = np.flip(gt_np, axis=0)
-        # gt_np = np.flip(gt_np, axis=1)
-        
-        # Convert numpy to PIL image
-        image_pil = Image.fromarray(image_np, mode="RGB")
-        # image_pil0 = Image.fromarray(image_np[:, :, 0], mode="L")
-        # image_pil1 = Image.fromarray(image_np[:, :, 1], mode="L")
-        # image_pil2 = Image.fromarray(image_np[:, :, 2], mode="L")
-        
-        # gt_pil = Image.fromarray(gt_np[:, :, 0], mode="L")
-        # p0, p1 = point_coords[0]
-        # draw = ImageDraw.Draw(image_pil)
-        # radius = 5  # Radius of the dot
-        
-        # draw.ellipse((p0 - radius, p1 - radius, p0 + radius, p1 + radius), fill="red")
-        
-        # draw_gt = ImageDraw.Draw(gt_pil)
-        # radius = 5  # Radius of the dot
-        # draw_gt.ellipse((p0 - radius, p1 - radius, p0 + radius, p1 + radius), fill="red")
-        
-        # Save intermediate images for debugging purposes
-        # image_pil.save("output_image.png")
-        # gt_pil.save("gt.png")
-        # image_pil0.save("output_image0.png")
-        # image_pil1.save("output_image1.png")
-        # image_pil2.save("output_image2.png")
-        
-        # Load SimpleClick model        
-        model = utils.load_is_model(self.simpleclick_path, self.device, eval_ritm=False, cpu_dist_maps=True)
-        clicker = clk.Clicker()
-        predictor = get_predictor(model, device=self.device, brs_mode='NoBRS')
-        
-        # Add user interactions to the predictor
-        for point, label in zip(point_coords, point_labels):
-            click = clk.Click(is_positive=label, coords=(point[0], point[1]))
-            clicker.add_click(click)
-        
-        predictor.set_input_image(image_pil)
-        
-        # Perform inference
-        prediction = predictor.get_prediction(clicker, prev_mask=prev_prediction)
-        prediction = (prediction >= self.threshold).astype(np.uint8)
-        
-        prediction = torch.tensor(prediction, dtype=prev_prediction.dtype, device=prev_prediction.device)
-        prediction = prediction.unsqueeze(0).unsqueeze(0)
-        
-        # Debugging
-        # print("0"*100)
-        # print(torch.sum(prediction), torch.sum(ground_truth_slice))
-        # print(compute_dice(y_pred=prediction,
-        #                    y=ground_truth_slice,
-        #                    include_background=False
-        #                    ))
-
-        logger.info(f"Input: {prev_prediction.shape}, output: {prediction.shape}, sum: {torch.sum(prediction)}")
-        # Ensure that the prediction has the same type and shape as input
-        return prediction
+        self.predictors = {}
+        self.inference_state = None
     
-    def run_stcn_propagation_3d(self, input_concat):
-        """
-        Propagates 2D segmentation across slices using STCN.
-
-        Args:
-            input_concat (torch.Tensor): Concatenated image and segmentation `(1, 4, H, W, D)`.
-
-        Returns:
-            torch.Tensor: 3D segmentation prediction `(1, 1, H, W, D)`.
-        """
-        # This method was not debugged yet
-        # input_concat [1, 3+1, 1024, 1024, 32]
-        image_patch = input_concat[:, :3, :, :, :]
-        mask_patch = input_concat[:, 3:, :, :, :]
-        
-        image_patch_reshaped = image_patch.permute(0, 4, 1, 2, 3)
-        mask_patch_reshaped = mask_patch.permute(0, 4, 1, 2, 3)
-        logger.info(f"Before prediction: {torch.sum(mask_patch_reshaped)}")
-        # Image: [1, T, 3, 480, 480]; Mask: [N, T, 1, 480, 480]
-        _, num_frames, _, height, width = mask_patch_reshaped.shape
-        
-        # Perform STCN-based segmentation propagation
-        model = STCN().cuda().eval()
-        # Performs input mapping such that stage 0 model can be loaded
-        prop_saved = torch.load(self.stcn_path)
-        
-        for k in list(prop_saved.keys()):
-            if k == 'value_encoder.conv1.weight':
-                if prop_saved[k].shape[1] == 4:
-                    pads = torch.zeros((64,1,7,7), device=prop_saved[k].device)
-                    prop_saved[k] = torch.cat([prop_saved[k], pads], 1)
-        model.load_state_dict(prop_saved)
-        
-        # Find the best starting frame
-        max_area, max_area_idx = -1, num_frames // 2
-        for i in range(num_frames):
-            area = torch.count_nonzero(mask_patch_reshaped[:,i])
-            # print(area)
-            if area > max_area:
-                max_area = area
-                max_area_idx = i
-        # logger.info(f"Before prediction: {torch.sum(mask_patch_reshaped[:, max_area_idx])}")
-        
-        # Perform STCN-based segmentation propagation
-        processor = InferenceCore(model, 
-                                  image_patch_reshaped, 
-                                  num_objects=1, 
-                                  top_k=self.top_k,
-                                  mem_every=self.memory_freq, 
-                                  include_last=self.include_last)
-        processor.interact(mask_patch_reshaped[:, max_area_idx], max_area_idx)
-
-        # Do unpad -> upsample to original size 
-        out_masks = torch.zeros((processor.t, 1, height, width), dtype=torch.uint8, device='cuda')
-        for ti in range(processor.t):
-            prob = unpad(processor.prob[:,ti], processor.pad)
-            prob = F.interpolate(prob, (height, width), mode='bilinear', align_corners=False)
-            out_masks[ti] = torch.argmax(prob, dim=0)
-        # Mask: [N, T, 1, 480, 480]
-        out_masks = out_masks.unsqueeze(0) # (1, 16, 1, 480, 480)
-        out_masks = out_masks.permute(0, 2, 3, 4, 1) # (1, 1, 480, 480, 16)
-        
-        out_masks = torch.tensor(out_masks, dtype=input_concat.dtype, device=input_concat.device)
-        logger.info(f"SUM prediction: {torch.sum(out_masks)}")
-        logger.info(f"STCN prediction: {out_masks.shape}")
-        
-        return out_masks
     
     def forward(self, x):
         """
-        Performs full 3D interactive segmentation using SimpleClick for 2D slices and STCN for 3D propagation.
+        Performs segmentation inference using SAM2 model.
 
         Args:
             x (Dict[str, Any]): Dictionary containing:
-                - `"image"`: 3D image tensor `(1, 1, H, W, D)`.
-                - `"previous_prediction"`: Previous segmentation `(1, 1, H, W, D)`.
-                - `"guidance"`: Dictionary of lesion/background user clicks.
-                - `"gt"`: Ground truth segmentation `(1, 1, H, W, D)`.
+                - `"image"`: 3D image tensor.
+                - `"guidance"`: Interaction guidance points.
+                - `"case_name"`: Case identifier.
+                - `"reset_state"`: Boolean flag to reset the inference state.
 
         Returns:
-            torch.Tensor: 3D segmentation prediction `(1, 1, H, W, D)`.
+            torch.Tensor: Segmentation prediction of shape `(1, 1, H, W, D)`.
         """
-        torch.backends.cudnn.deterministic = True        
-        image = x["image"][:, :1, :, :, :] # torch.Size([1, 3, 1024, 1024, 32])
-        image = image.repeat(1, 3, 1, 1, 1)
-        previous_prediction = x["previous_prediction"] # torch.Size([1, 1, 1024, 1024, 32])
-        guidance = x["guidance"] # {'lesion': tensor([[[  0, 718, 437,   9]]], device='cuda:0', dtype=torch.int32), 'background': tensor([], device='cuda:0', size=(1, 0), dtype=torch.int32)}
-        ground_truth = x["gt"]
+        evaluation_mode = x["evaluation_mode"]
         
-        logger.info(f"Got image: {image.shape}, prev_pred: {previous_prediction.shape}, guidance: {guidance}")
+        image = torch.squeeze(x["image"].cpu())[0]
+        guidance = x["guidance"]
+        case_name = x["case_name"]
+        reset_state = x["reset_state"]
+        reset_exemplars = x["reset_exemplars"]
         
-        # 2D interactive segmentation wit SimpleClick
+        current_instance_id = x["current_instance_id"]
+        call_exemplar_post_inference = x["call_exemplar_post_inference"]
+        previous_local_prediction = x["previous_prediction"]
+        previous_global_prediction = x["previous_global_prediction"]
+        
+        if evaluation_mode == "global_corrective":
+            # Perform operations iteratively:
+            # - prompt-based + memory-based segmentation + accumulate exemplars
+            # - use exemplars to get new positive click prompts
+            # - extended prompt-based + memory-based segmentation (no accumulation of exemplars)
+            pass
+        elif (evaluation_mode == "lesion_wise_non_corrective") or (evaluation_mode == "lesion_wise_corrective"):
+            if not call_exemplar_post_inference:
+                # Normal prompt-based and memory-based segmentation with exemplar bank accumulation
+                output = self.run_3d_local_correction_mode(reset_state, reset_exemplars, image, guidance, 
+                                                           case_name, current_instance_id)
+            else:
+                # Apply accumulated exemplar bank to segment objects as the final step after all interactions
+                output = self.run_3d_local_exemplar_post_inference(image, case_name)
+        else:
+            raise ValueError("Evaluation mode is not supported")
+        output = torch.Tensor(output).unsqueeze(0).unsqueeze(0)
+        return output.to(self.device)
+    
+    
+    def get_predictor(self):
+        predictor = self.predictors.get(self.device)
+        
+        if predictor is None:
+            logger.info(f"Using Device: {self.device}")
+            device_t = torch.device(self.device)
+            if device_t.type == "cuda":
+                torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
+                if torch.cuda.get_device_properties(0).major >= 8:
+                    torch.backends.cuda.matmul.allow_tf32 = True
+                    torch.backends.cudnn.allow_tf32 = True
+
+            predictor = build_mois_sam2_predictor(self.config_name, self.model_path, device=self.device)
+            self.predictors[self.device] = predictor
+            predictor.num_max_exemplars = self.exemplar_num
+        return predictor
+    
+    
+    def prepare_input_image_directory(self, case_name, image_tensor):
+        video_dir = os.path.join(
+            self.image_cache.cache_path, case_name
+        ) 
+        
+        logger.info(f"Image: {image_tensor.shape}")
+        
+        if not os.path.isdir(video_dir):
+            os.makedirs(video_dir, exist_ok=True)
+            for slice_idx in tqdm(range(image_tensor.shape[-1])):
+                slice_np = image_tensor[:, :, slice_idx].numpy()
+                slice_file = os.path.join(video_dir, f"{str(slice_idx).zfill(5)}.jpg")
+                Image.fromarray(slice_np).convert("RGB").save(slice_file)
+            logger.info(f"Image (Flattened): {image_tensor.shape[-1]} slices; {video_dir}")
+        
+        # Set expiry time for cached images
+        self.image_cache.cached_dirs[video_dir] = time() + self.image_cache.cache_expiry_sec
+        return video_dir
+    
+    
+    def extract_interaction_points_from_guidance(self, guidance):
         fps: dict[int, Any] = {}
         bps: dict[int, Any] = {}
         sids = set()
         
-        # Get points
         for key in {"lesion", "background"}:
             point_tensor = np.array(guidance[key].cpu())
             logger.info(f"point tensor: {point_tensor}")
             if point_tensor.size == 0:
-                continue # No interaction points
+                continue # Skip if no interaction points
             else:
                 for point_id in range(point_tensor.shape[1]):
-                    point = point_tensor[:, point_id, :][0][1:]
+                    point = point_tensor[:, point_id, :][0][1:] # Extract (x, y, slice_index)
                     logger.info(f"p: {point}")
                     sid = point[2]
                     
@@ -545,56 +414,130 @@ class SimpleClick3DNetwork(nn.Module):
                         kps[sid].append([point[0], point[1]])
                     else:
                         kps[sid] = [[point[0], point[1]]]
-        logger.info(f"Formed FPs: {fps}, and BPs: {bps}")
+        return fps, bps, sids
+    
+    
+    def run_3d_local_correction_mode(self,
+                                     reset_state, 
+                                     reset_exemplars,
+                                     image_tensor, 
+                                     guidance, 
+                                     case_name,
+                                     current_instance_id):
+        """
+        In the local correction mode the interactions are performed on a lesion level.
+        With each interaction an exemplar for a given lesion is being updated.
+        With this method we aggregate exemplars.
+        """
+        predictor = self.get_predictor()
+        video_dir = self.prepare_input_image_directory(case_name, image_tensor)
         
-        # Inference
+        # Initialize inference state if required
+        if reset_state:
+            if self.inference_state:
+                predictor.reset_state(self.inference_state, reset_exemplars=reset_exemplars)
+            self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=reset_exemplars)
+        
+        fps, bps, sids = self.extract_interaction_points_from_guidance(guidance)
+        
+        # Add interaction points, perform instance prompt-based segmentation in a given slice 
+        # and add prompted exemplars (if it is not empty)
+        pred_forward = np.zeros(tuple(image_tensor.shape))
+        
         for sid in sorted(sids):
-            
             fp = fps.get(sid, [])
             bp = bps.get(sid, [])
             
             point_coords = fp + bp
-            point_coords = [[p[1], p[0]] for p in point_coords]  # Flip x,y => y,x Check whether it is correct
+            point_coords = [[p[1], p[0]] for p in point_coords]  # Flip x,y => y,x
             point_labels = [1] * len(fp) + [0] * len(bp)
-            logger.info(f"{sid} - Coords: {point_coords}; Labels: {point_labels}") # 9 - Coords: [[437, 718], ...]; Labels: [1, ...]
+            logger.info(f"{sid} - Coords: {point_coords}; Labels: {point_labels}")
             
-            logger.info(f"Inferencing slice with SimpelClick: {sid}")
+            o_frame_ids, o_obj_ids, o_mask_logits = predictor.add_new_points_or_box(
+                inference_state=self.inference_state,
+                frame_idx=sid,
+                obj_id=current_instance_id,
+                points=np.array(point_coords) if point_coords else None,
+                labels=np.array(point_labels) if point_labels else None,
+                box=None,
+                is_com=False, # In this case the interaction points are not obtained via exemplars
+                add_exemplar=True 
+            )
+            pred_forward[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
             
-            image_slice = image[:, :, :, :, sid]  # torch.Size([1, 3, 1024, 1024])
-            ground_truth_slice = ground_truth[:, :, :, :, sid]
-            previous_prediction_slice = previous_prediction[:, :, :, :, sid] # torch.Size([1, 1, 1024, 1024])
-            
-            updated_slice = self.run_simple_click_2d(image_slice, 
-                                                     previous_prediction_slice,
-                                                     point_coords,
-                                                     point_labels,
-                                                     ground_truth_slice
-                                                     )
-            # Insert updated slice back to 3D prediction
-            # Debugging the 2D output prediction of the SimpleClick model
-            # print("BEFORE INSERT: ", torch.sum(previous_prediction))
-            previous_prediction[:, :, :, :, sid] = updated_slice # [1, 3+1, 1024, 1024, 32]
-            # print("After INSERT: ", torch.sum(previous_prediction))
-        logger.info(f"Finished SimpleClick inference")
+        # Forward-slice memory-based propagation + add non-prompted exemplars
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, add_exemplar=True):
+            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
+            pred_forward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
         
-        # 3D propagation
-        # Form input for 3D propagation
-        input_concat = torch.cat([image, previous_prediction], dim=1)
+        #  Backward-slice memory-based propagation + add non-prompted exemplars
+        pred_backward = np.zeros(tuple(image_tensor.shape))
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, reverse=True, add_exemplar=True):
+            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
+            pred_backward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
+        
+        print("-1-Exemplar_dict-"*5)
+        print(predictor.exemplars_dict.keys())
+        
+        # Merge forward and backward propagation
+        pred = np.logical_or(pred_forward, pred_backward) 
+        return pred
+    
+    
+    def run_3d_local_exemplar_post_inference(self,
+                                             image_tensor, 
+                                             case_name):
+        """
+        This method is also called in the local correction mode, but after
+        finishing all interactions on a lesion level and aggregating exemplar bank.
+        This method uses the exemplars bank to extrapolate segmentation to other lesions.
+        """
+        predictor = self.get_predictor()
+        video_dir = self.prepare_input_image_directory(case_name, image_tensor)
+        
+        prediction = np.zeros(tuple(image_tensor.shape))
+        
+        if self.exemplar_use_com:
+            if self.exemplar_inference_all_slices:
+                pass
+            else:
+                pass
+        else: # Use the binary prediction directly and independently on each slice
+            if self.exemplar_inference_all_slices:
+                num_slices = image_tensor.shape[-1]
+                for slice_idx in range(0, num_slices):
+                    (_, 
+                     _, 
+                     current_semantic_logits, 
+                     _)= predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
+                    prediction[:, :, slice_idx] = (current_semantic_logits[0][0] > 0.0).cpu().numpy()
+            else:
+                raise ValueError("Use case without center of mass dectection assumes exemplar inference on all slices!")
+        return prediction
 
-        # Patch-wise processing using SlidingWindowInferer
-        inferer = SlidingWindowInferer(
-            roi_size=self.patch_size,
-            sw_batch_size=self.sw_batch_size,  # Process one patch at a time
-            overlap=self.overlap,
-            mode="gaussian"
-        )
-                    
-        # Run inference 
-        output_prediction = inferer(
-            inputs=input_concat,
-            network=self.run_stcn_propagation_3d  # Custom function for patch processing
-        )
 
-        # Retrieve the final 3D prediction
-        logger.info(f"Prediction: {output_prediction.shape}")
-        return output_prediction.to(self.device)
+    def run_3d_global_correction_mode(self,
+                                      reset_state, 
+                                      reset_exemplars,
+                                      image_tensor, 
+                                      guidance, 
+                                      case_name):
+        """
+        In the global correction mode exemplar-based segmentation (extrapolation of segmentation
+        to other lesions) is performed right after each prompt-based segmentation with memory-based propagation.
+        The goal of exemplar-based segmentation is to find center of masses of all lesions and them to 
+        the list of original prompts (both positive and negative). The updated prompt list can be used for inference.
+        """
+        predictor = self.get_predictor()
+        video_dir = self.prepare_input_image_directory(case_name, image_tensor)
+        
+        # Initialize inference state if required
+        if reset_state:
+            if self.inference_state:
+                predictor.reset_state(self.inference_state, reset_exemplars=reset_exemplars)
+            self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=reset_exemplars)
+        
+        fps, bps, sids = self.extract_interaction_points_from_guidance(guidance)
+        
+        # ToDo: Need to add interaction points obtained with exemplars!
+   

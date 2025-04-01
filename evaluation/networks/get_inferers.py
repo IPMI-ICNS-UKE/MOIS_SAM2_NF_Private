@@ -35,7 +35,7 @@ def get_inferer(args, device, network=None):
     elif args.network_type == "DINs":
         inferer = configure_sliding_window_inferer(
             args, device, ROI_SIZE_FOR_DINS, SW_OVERLAP_FOR_DINS)
-    elif args.network_type in ["SimpleClick", "SAM2"]:
+    elif args.network_type in ["SimpleClick", "SAM2", "MOIS_SAM2"]:
         inferer = SimpleInferer()
     else:
         raise ValueError(f"Unsupported network type: {args.network_type}")    

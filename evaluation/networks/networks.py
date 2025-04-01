@@ -3,7 +3,7 @@ import os
 from monai.networks.nets.dynunet import DynUNet
 import torch
 
-from evaluation.networks.custom_networks import DINsNetwork, SAM2Network, SimpleClick3DNetwork
+from evaluation.networks.custom_networks import DINsNetwork, SAM2Network, MOIS_SAM2Network
 
 logger = logging.getLogger("evaluation_pipeline_logger")
 
@@ -60,13 +60,6 @@ def get_network(args, device):
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
         network = DINsNetwork(model_path, providers, device)
         
-    elif args.network_type == "SimpleClick":
-        logger.info("The SimpleClick model is still under development and does not work properly yet!!!")
-        stcn_propagator_path = os.path.join(args.model_dir, 
-                                            args.checkpoint_propagator)
-        network = SimpleClick3DNetwork(simpleclick_path=model_path,
-                                       stcn_path=stcn_propagator_path,
-                                       device=device)
     elif args.network_type == "SAM2":
         config_path = os.path.join(args.model_dir, args.config_name)
         network = SAM2Network(model_path=model_path,
@@ -74,6 +67,17 @@ def get_network(args, device):
                               cache_path=args.cache_dir,
                               device=device
                               )
+    
+    elif args.network_type == "MOIS_SAM2":
+        config_path = os.path.join(args.model_dir, args.config_name)
+        network = MOIS_SAM2Network(model_path=model_path,
+                                   config_path=config_path,
+                                   cache_path=args.cache_dir,
+                                   device=device,
+                                   exemplar_use_com=args.exemplar_use_com,
+                                   exemplar_inference_all_slices=args.exemplar_inference_all_slices,
+                                   exemplar_num=args.exemplar_num
+                                   )
     else:
         raise ValueError(f"Unsupported network: {args.network_type}")
 

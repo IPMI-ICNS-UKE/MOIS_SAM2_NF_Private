@@ -133,6 +133,7 @@ class Interaction:
                 
         # Create a global prediction placeholder
         prediction_global = torch.zeros_like(cc_label)
+        prediction_global_exemplar_based = torch.zeros_like(cc_label)
         prediction_global_after_single_interaction = torch.zeros_like(cc_label)
         
         # Initialize global counters
@@ -141,6 +142,7 @@ class Interaction:
         num_interactions_total = [0, ]
         dsc_instance_dict = {}
         max_number_lesions_achieved = False
+        reset_exemplars = True
         
         logger.info(f"Starting a new case: {case_name}")  
         while ((dsc_global[-1] < self.dsc_global_max) and 
@@ -181,6 +183,7 @@ class Interaction:
                 prediction_after_single_interaction = torch.zeros_like(cc_label_local)
                 batchdata["pred_local"] = prediction_local
                 
+                # Interactions per instance
                 while ((dsc_local[-1] < self.dsc_local_max) and 
                        (num_interactions_local[-1] < self.num_interactions_local_max)): # Start a new interaction
                     # Get discrepancy mask and interaction point
@@ -202,6 +205,11 @@ class Interaction:
                         "previous_prediction": batchdata["pred_local"].to(device),
                         "case_name": case_name,
                         "reset_state": new_image_flag,
+                        "reset_exemplars": reset_exemplars,
+                        "current_instance_id": instance_id, # For MOIS SAM2
+                        "call_exemplar_post_inference": False,
+                        "evaluation_mode": self.args.evaluation_mode, # For MOIS SAM2
+                        "previous_global_prediction": prediction_global, # For MOIS SAM2
                         "gt": batchdata["connected_component_label_local"].to(device) # For SimpleClick debugging
                     }
                     
@@ -215,6 +223,7 @@ class Interaction:
                         prediction_local = engine.inferer(inputs, engine.network)
                     batchdata["pred_local"] = prediction_local
                     new_image_flag = False
+                    reset_exemplars = False
                     
                     # Apply post-processing for the local prediction
                     batchdata_list = decollate_batch(batchdata)
@@ -248,6 +257,36 @@ class Interaction:
                 if self.args.evaluation_mode != "global_corrective":
                     prediction_global = torch.max(prediction_global, batchdata["pred_local"])
                     prediction_global_after_single_interaction = torch.max(prediction_global_after_single_interaction, prediction_after_single_interaction)
+            
+            # Finished processing of instances
+            
+            # If MOIS SAM2 is used in the local mode, we should use exemplar propagation
+            # after finishing lesion-level interactions and agregation of exemplars.
+            # After this step the exemplar-bank should be reset.
+            if ((self.args.evaluation_mode == "lesion_wise_non_corrective") or 
+                (self.args.evaluation_mode == "lesion_wise_corrective")) and self.args.network_type == "MOIS_SAM2":
+                logger.info(f">>> Running MOIS SAM2 exemplar-based inference after annotating the last lesion instance...")
+                # Build input dictionary for the inferer
+                inputs = {
+                    "image": batchdata["image"].to(device),
+                    "guidance": None,
+                    "previous_prediction": batchdata["pred_local"].to(device),
+                    "case_name": case_name,
+                    "reset_state": new_image_flag,
+                    "reset_exemplars": reset_exemplars,
+                    "current_instance_id": instance_id, # For MOIS SAM2
+                    "call_exemplar_post_inference": True, # For MOIS SAM2
+                    "evaluation_mode": self.args.evaluation_mode, # For MOIS SAM2
+                    "previous_global_prediction": prediction_global, # For MOIS SAM2
+                    "gt": batchdata["connected_component_label_local"].to(device) # For SimpleClick debugging
+                }
+                
+                # Perform inference and get the local prediction
+                engine.fire_event(IterationEvents.INNER_ITERATION_STARTED)
+                # Forward Pass
+                with torch.no_grad():
+                    prediction_global_exemplar_based = engine.inferer(inputs, engine.network).detach().cpu()
+                prediction_global = torch.max(prediction_global, prediction_global_exemplar_based)
             
             # If the evaluation was done globally, consider the last local interaction result as global
             if self.args.evaluation_mode == "global_corrective":

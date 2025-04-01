@@ -126,7 +126,7 @@ def get_pre_transforms(args,
             ]
         )
         
-    elif args.network_type == "SAM2":
+    elif (args.network_type == "SAM2") or (args.network_type == "MOIS_SAM2"):
         spacing = SPACING_FOR_SAM2
         orientation = ORIENTATION_FOR_SAM2
         transforms.extend(
@@ -208,7 +208,8 @@ def get_interaction_post_transforms(args, device="cpu"):
             EnsureTyped(keys="pred_local", device=device),
         ]
     elif ((args.network_type == "SimpleClick") or 
-          (args.network_type == "SAM2")):
+          (args.network_type == "SAM2") or 
+          (args.network_type == "MOIS_SAM2")):
         transforms = [
             EnsureTyped(keys="pred_local", device=device)
         ]

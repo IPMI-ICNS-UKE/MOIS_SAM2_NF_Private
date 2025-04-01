@@ -15,12 +15,12 @@
 # The majority of the classes in this file were taken without modification from the 
 # original SW-FastEdit repository.
 
+from __future__ import annotations
+
 from typing import Dict, Hashable, List, Mapping, Tuple
 from enum import IntEnum
 import logging
 import gc
-
-from __future__ import annotations
 
 from scipy.ndimage import label
 import torch
