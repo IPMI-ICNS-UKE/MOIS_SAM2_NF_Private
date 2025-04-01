@@ -53,7 +53,8 @@ class MOISSAM2Base(SAM2Base):
         add_tpos_enc_to_exemplar_obj_ptrs=True,
         use_mlp_for_exemplar_obj_ptr_proj = False,
         proj_tpos_enc_in_exemplar_obj_ptrs=False,
-        directly_add_no_exemplar_embed=False,        
+        directly_add_no_exemplar_embed=False,
+        use_only_prompted_exemplars=False,
         **kwargs
     ):
         """
@@ -79,6 +80,7 @@ class MOISSAM2Base(SAM2Base):
         self.exemplar_attention = exemplar_attention
         # Maximum number of exemplars
         self.num_max_exemplars = num_max_exemplars 
+        self.use_only_prompted_exemplars = use_only_prompted_exemplars
         
         # 2 stands for two types of exemplars - conditioning and non-conditioning
         self.exemplar_type_enc = torch.nn.Parameter(
@@ -174,7 +176,7 @@ class MOISSAM2Base(SAM2Base):
             # Prioritize prompted exemplars, then fill remaining slots with non-prompted ones
             selected_exemplars = prompted_exemplars[:self.num_max_exemplars]
             num_remaining = self.num_max_exemplars - len(selected_exemplars)
-            if num_remaining > 0:
+            if (num_remaining > 0) and (not self.use_only_prompted_exemplars):
                 selected_exemplars.extend(non_prompted_exemplars[:num_remaining])
             
             # Extract and process information from selected exemplars         

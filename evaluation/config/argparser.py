@@ -47,8 +47,9 @@ def parse_args():
     
     # MOIS SAM2-specific arguments with defaults
     parser.add_argument('--exemplar_use_com', type=lambda x: bool(strtobool(x)), default=True, help="Use exemplar-based segmentation to define center of masses.")
+    parser.add_argument('--exemplar_use_only_prompted', type=lambda x: bool(strtobool(x)), default=False, help="Use only prompted exemplars.")
     parser.add_argument('--exemplar_inference_all_slices', type=lambda x: bool(strtobool(x)), default=True, help="Use exemplar-based segmentation in all slices of an image.")
-    parser.add_argument('--exemplar_num', type=int, default=10, help="Number of exemplars to use in the exemplar-based segmentation")
+    parser.add_argument('--exemplar_num', type=int, default=8, help="Number of exemplars to use in the exemplar-based segmentation")
 
     args = parser.parse_args()
     
