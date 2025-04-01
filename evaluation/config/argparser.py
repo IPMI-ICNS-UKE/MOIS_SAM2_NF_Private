@@ -1,4 +1,5 @@
 import argparse
+from distutils.util import strtobool
 import os
 
 def parse_args():
@@ -14,17 +15,17 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluation Pipeline for Interactive Segmentation")
     
     # General arguments
-    parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SimpleClick', 'SAM2'], required=True, help="Type of network to evaluate")
+    parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SimpleClick', 'SAM2', 'MOIS_SAM2'], required=True, help="Type of network to evaluate")
     parser.add_argument('--fold', type=int, choices=[1, 2, 3], required=True, help="Cross-validation fold")
     parser.add_argument('--test_set_id', type=int, choices=[1, 2, 3], required=True, help="Evaluation data subset")
     parser.add_argument('--evaluation_mode', type=str, choices=['lesion_wise_non_corrective', 'lesion_wise_corrective', 'global_corrective'], required=True, help="Evaluation mode")
     
     # Path arguments
     parser.add_argument('--input_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/data/raw")
-    parser.add_argument('--results_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/evaluation/results")
-    parser.add_argument('--model_weights_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/model_weights_finetuned")
+    parser.add_argument('--results_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/evaluation/results")
+    parser.add_argument('--model_weights_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/model_weights_finetuned")
     parser.add_argument('--checkpoint_name',type=str, default="checkpoint.pt")
-    parser.add_argument('--log_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/evaluation/logs")
+    parser.add_argument('--log_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/evaluation/logs")
    
     # Data arguments
     parser.add_argument("--limit", type=int, default=0, help="Limit the amount of training/validation samples to a fixed number")
@@ -41,9 +42,14 @@ def parse_args():
     parser.add_argument("--no_disks", default=False, action="store_true")
     
     # Cache arguments
-    parser.add_argument("--cache_dir", type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/evaluation/cache")
+    parser.add_argument("--cache_dir", type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/evaluation/cache")
     parser.add_argument("--throw_away_cache", default=False, action="store_true", help="Use a temporary folder which will be cleaned up after the program run.")
     
+    # MOIS SAM2-specific arguments with defaults
+    parser.add_argument('--exemplar_use_com', type=lambda x: bool(strtobool(x)), default=True, help="Use exemplar-based segmentation to define center of masses.")
+    parser.add_argument('--exemplar_inference_all_slices', type=lambda x: bool(strtobool(x)), default=True, help="Use exemplar-based segmentation in all slices of an image.")
+    parser.add_argument('--exemplar_num', type=int, default=10, help="Number of exemplars to use in the exemplar-based segmentation")
+
     args = parser.parse_args()
     
     # Derived arguments based on evaluation mode
@@ -89,6 +95,11 @@ def parse_args():
         args.config_name = "sam2.1_hiera_b+.yaml"
         args.non_standard_network = True
         args.patch_size_discrepancy = (512, 512, 16)
+    elif args.network_type == "MOIS_SAM2":
+        args.checkpoint_name = "checkpoint.pt"
+        args.config_name = "mois_sam2.1_hiera_b+.yaml"
+        args.non_standard_network = True
+        args.patch_size_discrepancy = (512, 512, 16)     
         
     # Default labels
     args.labels = {"lesion": 1, "background": 0}
