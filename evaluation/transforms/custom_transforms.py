@@ -24,6 +24,8 @@ import gc
 
 from scipy.ndimage import label
 import torch
+import numpy as np
+from warnings import warn
 from monai.config import KeysCollection
 from monai.data import MetaTensor, PatchIterd
 from monai.losses import DiceLoss
@@ -36,6 +38,12 @@ from monai.transforms import (
     MapTransform,
     Randomizable,
 )
+from monai.transforms.transform import Transform
+from monai.utils import convert_to_tensor, convert_data_type, convert_to_dst_type
+from monai.data.meta_obj import get_track_meta
+from monai.config import DtypeLike, NdarrayOrTensor
+from monai.utils.enums import TransformBackends
+
 from evaluation.utils.distance_transform import get_random_choice_from_tensor
 from evaluation.utils.helper import (
     get_tensor_at_coordinates, 
@@ -538,3 +546,105 @@ class ConnectedComponentAnalysisd(MapTransform):
             instance_mask = torch.tensor(labeled_mask, dtype=torch.int32, device=data[key].device)  # Convert back to tensor
             data[key] = MetaTensor(instance_mask, meta=meta)        
         return data
+
+
+class ScaleIntensityRangePercentilesIgnoreZero(Transform):
+    """
+    Scale intensities based on the lower and upper percentiles of non-zero values.
+
+    The intensity range between the lower and upper percentiles is linearly scaled to [out_min, out_max].
+    Zero-valued voxels are ignored in percentile computation and restored to zero in the final output.
+
+    Args:
+        lower: lower percentile (e.g., 0.5).
+        upper: upper percentile (e.g., 99.5).
+        out_min: target minimum intensity (default: 0.0).
+        out_max: target maximum intensity (default: 255.0).
+        dtype: output data type (default: np.float32).
+    """
+
+    backend = [TransformBackends.TORCH, TransformBackends.NUMPY]
+
+    def __init__(
+        self,
+        lower: float = 0.5,
+        upper: float = 99.5,
+        out_min: float = 0.0,
+        out_max: float = 255.0,
+        dtype: DtypeLike = np.float32,
+    ) -> None:
+        self.lower = lower
+        self.upper = upper
+        self.out_min = out_min
+        self.out_max = out_max
+        self.dtype = dtype
+
+    def __call__(self, img: NdarrayOrTensor) -> NdarrayOrTensor:
+        img = convert_to_tensor(img, track_meta=get_track_meta())
+        img_t = convert_to_tensor(img, track_meta=False)
+        ret: NdarrayOrTensor
+        
+        input_dtype = self.dtype or img.dtype
+
+        # Convert to numpy for percentile calculations
+        img_np = img.detach().cpu().numpy() if isinstance(img, torch.Tensor) else img
+        nonzero = img_np[img_np > 0]
+
+        if nonzero.size == 0:
+            warn("Image has no non-zero voxels. Returning zero image.", UserWarning)
+            return convert_data_type(np.zeros_like(img_np), dtype=input_dtype)[0]
+
+        lower_val = np.percentile(nonzero, self.lower)
+        upper_val = np.percentile(nonzero, self.upper)
+
+        if upper_val - lower_val == 0.0:
+            warn("Divide by zero (percentile range is zero)", UserWarning)
+            scaled = img_np - lower_val
+        else:
+            img_clipped = np.clip(img_np, lower_val, upper_val)
+            scaled = (img_clipped - lower_val) / (upper_val - lower_val)
+            scaled = scaled * (self.out_max - self.out_min) + self.out_min
+
+        # Keep zeros as zeros
+        scaled[img_np == 0] = 0
+
+        # Convert back to MetaTensor if needed
+        scaled_tensor = torch.tensor(scaled, dtype=torch.float32, device=img.device if isinstance(img, torch.Tensor) else "cpu")
+
+        ret = convert_to_dst_type(scaled_tensor, dst=img, dtype=self.dtype or img_t.dtype)[0]
+        return ret
+
+class ScaleIntensityRangePercentilesIgnoreZerod(MapTransform):
+    """
+    Dictionary-based wrapper of `ScaleIntensityRangePercentilesIgnoreZero`.
+
+    Args:
+        keys: keys of the corresponding items to be transformed.
+        lower: lower percentile (e.g., 0.5).
+        upper: upper percentile (e.g., 99.5).
+        out_min: target minimum intensity.
+        out_max: target maximum intensity.
+        dtype: output data type. If None, same as input image.
+        allow_missing_keys: don't raise exception if key is missing.
+    """
+
+    backend = ScaleIntensityRangePercentilesIgnoreZero.backend
+
+    def __init__(
+        self,
+        keys: KeysCollection,
+        lower: float = 0.5,
+        upper: float = 99.5,
+        out_min: float = 0.0,
+        out_max: float = 255.0,
+        dtype: DtypeLike = np.float32,
+        allow_missing_keys: bool = False,
+    ) -> None:
+        super().__init__(keys, allow_missing_keys)
+        self.scaler = ScaleIntensityRangePercentilesIgnoreZero(lower, upper, out_min, out_max, dtype)
+
+    def __call__(self, data: Mapping[Hashable, NdarrayOrTensor]) -> dict[Hashable, NdarrayOrTensor]:
+        d = dict(data)
+        for key in self.key_iterator(d):
+            d[key] = self.scaler(d[key])
+        return d
