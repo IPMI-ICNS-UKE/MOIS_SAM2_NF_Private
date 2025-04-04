@@ -76,7 +76,8 @@ def get_network(args, device):
                                    device=device,
                                    exemplar_use_com=args.exemplar_use_com,
                                    exemplar_inference_all_slices=args.exemplar_inference_all_slices,
-                                   exemplar_num=args.exemplar_num
+                                   exemplar_num=args.exemplar_num,
+                                   exemplar_use_only_prompted=args.exemplar_use_only_prompted
                                    )
     else:
         raise ValueError(f"Unsupported network: {args.network_type}")

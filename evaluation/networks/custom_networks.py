@@ -285,7 +285,8 @@ class MOIS_SAM2Network(nn.Module):
                  device, 
                  exemplar_use_com,
                  exemplar_inference_all_slices,
-                 exemplar_num
+                 exemplar_num,
+                 exemplar_use_only_prompted
                  ):
         super().__init__()
         self.image_cache = ImageCache(cache_path)
@@ -299,6 +300,7 @@ class MOIS_SAM2Network(nn.Module):
         self.exemplar_use_com = exemplar_use_com
         self.exemplar_inference_all_slices = exemplar_inference_all_slices
         self.exemplar_num = exemplar_num
+        self.exemplar_use_only_prompted = exemplar_use_only_prompted
         
         GlobalHydra.instance().clear()
         initialize_config_dir(config_dir=model_dir)
@@ -369,6 +371,7 @@ class MOIS_SAM2Network(nn.Module):
             predictor = build_mois_sam2_predictor(self.config_name, self.model_path, device=self.device)
             self.predictors[self.device] = predictor
             predictor.num_max_exemplars = self.exemplar_num
+            predictor.exemplar_use_only_prompted = self.exemplar_use_only_prompted
         return predictor
     
     
@@ -452,7 +455,6 @@ class MOIS_SAM2Network(nn.Module):
             point_coords = [[p[1], p[0]] for p in point_coords]  # Flip x,y => y,x
             point_labels = [1] * len(fp) + [0] * len(bp)
             logger.info(f"{sid} - Coords: {point_coords}; Labels: {point_labels}")
-            
             o_frame_ids, o_obj_ids, o_mask_logits = predictor.add_new_points_or_box(
                 inference_state=self.inference_state,
                 frame_idx=sid,
@@ -475,10 +477,7 @@ class MOIS_SAM2Network(nn.Module):
         for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, reverse=True, add_exemplar=True):
             logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
             pred_backward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
-        
-        print("-1-Exemplar_dict-"*5)
-        print(predictor.exemplars_dict.keys())
-        
+                
         # Merge forward and backward propagation
         pred = np.logical_or(pred_forward, pred_backward) 
         return pred
@@ -497,11 +496,48 @@ class MOIS_SAM2Network(nn.Module):
         
         prediction = np.zeros(tuple(image_tensor.shape))
         
-        if self.exemplar_use_com:
-            if self.exemplar_inference_all_slices:
+        if self.exemplar_use_com: # Use the center of mass definition
+            
+            if self.exemplar_inference_all_slices: # Definition of CoMs on all slices independently
+                num_slices = image_tensor.shape[-1]
+                for slice_idx in range(0, num_slices):
+                    (_, 
+                     _, 
+                     _, 
+                     filtered_objects_dict)= predictor.find_exemplars_in_slice(self.inference_state, 
+                                                                               slice_idx,
+                                                                               binarization_threshold=0.5,
+                                                                               min_area_threshold=5)
+                    
+                    prediction_slice = np.zeros(tuple(prediction[:, :, slice_idx].shape)) 
+                    
+                    for obj_idx, obj_data in filtered_objects_dict.items():
+                        # ToDo: Check the format of the interaction point: np.array([[210, 350]], dtype=np.float32)
+                        com_point = obj_data["com_point"]  # Center of mass point 
+                        # com_point = [[com_point[0][1], com_point[0][0]]]
+                        com_label = np.array([1], np.int32)
+                                    
+                        # Add interaction points (positive label: 1)
+                        _, _, current_mask_logits = predictor.add_new_points_or_box(
+                            self.inference_state,
+                            slice_idx,
+                            obj_idx,
+                            points=com_point,
+                            labels=com_label,
+                            is_com=True,
+                            clear_old_points=True,
+                            normalize_coords=False, # ToDo: Make sure this is correct
+                            box=None,
+                            add_exemplar=False
+                            )
+                        
+                        current_mask = (current_mask_logits[-1][0] > 0.0).cpu().numpy()
+                        prediction_slice = np.maximum(prediction_slice, current_mask)
+                    prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], prediction_slice)               
+            
+            else: # Definition of CoMs only on the prompted slices + propagation
                 pass
-            else:
-                pass
+            
         else: # Use the binary prediction directly and independently on each slice
             if self.exemplar_inference_all_slices:
                 num_slices = image_tensor.shape[-1]
@@ -511,8 +547,10 @@ class MOIS_SAM2Network(nn.Module):
                      current_semantic_logits, 
                      _)= predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
                     prediction[:, :, slice_idx] = (current_semantic_logits[0][0] > 0.0).cpu().numpy()
+            
             else:
                 raise ValueError("Use case without center of mass dectection assumes exemplar inference on all slices!")
+            
         return prediction
 
 
