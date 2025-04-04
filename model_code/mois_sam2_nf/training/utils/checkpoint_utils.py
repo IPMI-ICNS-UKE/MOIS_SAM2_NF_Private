@@ -387,7 +387,7 @@ def mois_load_state_dict_into_model(
     # Fill missing `exemplar_attention` keys using `memory_attention`
     filled_keys = []
     for key in list(state_dict.keys()):  # Copy keys to avoid modifying dict during iteration
-        if "memory_attention" in key:
+        if ("memory_attention" in key) and (key.replace("memory_attention", "exemplar_attention") not in state_dict.keys()):
             exemplar_attention_key = key.replace("memory_attention", "exemplar_attention")
             state_dict[exemplar_attention_key] = state_dict[key].clone()
             filled_keys.append(exemplar_attention_key)

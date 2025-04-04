@@ -25,30 +25,93 @@
 import torch
 import numpy as np
 import cv2
-import torch.nn.functional as F
 from tqdm import tqdm
+from collections import OrderedDict
 
-from sam2.modeling.sam2_base import NO_OBJ_SCORE, SAM2Base
 from sam2.modeling.mois_sam2_base import MOISSAM2Base
 from sam2.sam2_video_predictor import SAM2VideoPredictor
-from sam2.utils.misc import concat_points, fill_holes_in_mask_scores, load_video_frames
+from sam2.utils.misc import concat_points, fill_holes_in_mask_scores
+from sam2.utils.mois_misc import load_scan_slices
 
 
 class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
     def __init__(
         self, 
+        use_low_res_masks_for_com_detection=True,
         **kwargs,
         ):
         super().__init__(**kwargs)
         # Initialize exemplars dictionary
         self.exemplars_dict = {}  # Stores all exemplars
         self.training = False
-        # ToDo: Add more parameters if needed
+        self.use_low_res_masks_for_com_detection = use_low_res_masks_for_com_detection
+        if self.use_low_res_masks_for_com_detection:
+            # Set the scale factor to transform the center of a lesion mass 
+            # from low res 256x256 mask to the original 1024x1024.
+            self.com_scale_coefficient = 4
+        else:
+            self.com_scale_coefficient = 1
+            raise ValueError("An option to perform center of a lesion mass detection in original resolution is not implemented yet!")
     
-    def init_state(self, video_path, reset_exemplars=True, **kwargs):
+    def init_state(self, video_path, 
+                   offload_video_to_cpu=False,
+                   offload_state_to_cpu=False,
+                   async_loading_frames=False, 
+                   reset_exemplars=True, 
+                   **kwargs):
         """Initialize an inference state for a new video."""
-        inference_state = super().init_state(video_path, **kwargs)  # Call parent method
-
+        compute_device = self.device  # device of the model
+        # Replaced original video frame loading with scan slices loader
+        images, video_height, video_width = load_scan_slices(
+            video_path=video_path,
+            image_size=self.image_size,
+            offload_video_to_cpu=offload_video_to_cpu,
+            async_loading_frames=async_loading_frames,
+            compute_device=compute_device,
+        )
+        
+        inference_state = {}
+        inference_state["images"] = images
+        inference_state["num_frames"] = len(images)
+        # whether to offload the video frames to CPU memory
+        # turning on this option saves the GPU memory with only a very small overhead
+        inference_state["offload_video_to_cpu"] = offload_video_to_cpu
+        # whether to offload the inference state to CPU memory
+        # turning on this option saves the GPU memory at the cost of a lower tracking fps
+        # (e.g. in a test case of 768x768 model, fps dropped from 27 to 24 when tracking one object
+        # and from 24 to 21 when tracking two objects)
+        inference_state["offload_state_to_cpu"] = offload_state_to_cpu
+        # the original video height and width, used for resizing final output scores
+        inference_state["video_height"] = video_height
+        inference_state["video_width"] = video_width
+        inference_state["device"] = compute_device
+        if offload_state_to_cpu:
+            inference_state["storage_device"] = torch.device("cpu")
+        else:
+            inference_state["storage_device"] = compute_device
+        # inputs on each frame
+        inference_state["point_inputs_per_obj"] = {}
+        inference_state["mask_inputs_per_obj"] = {}
+        # visual features on a small number of recently visited frames for quick interactions
+        inference_state["cached_features"] = {}
+        # values that don't change across frames (so we only need to hold one copy of them)
+        inference_state["constants"] = {}
+        # mapping between client-side object id and model-side object index
+        inference_state["obj_id_to_idx"] = OrderedDict()
+        inference_state["obj_idx_to_id"] = OrderedDict()
+        inference_state["obj_ids"] = []
+        # Slice (view) of each object tracking results, sharing the same memory with "output_dict"
+        inference_state["output_dict_per_obj"] = {}
+        # A temporary storage to hold new outputs when user interact with a frame
+        # to add clicks or mask (it's merged into "output_dict" before propagation starts)
+        inference_state["temp_output_dict_per_obj"] = {}
+        # Frames that already holds consolidated outputs from click or mask inputs
+        # (we directly use their consolidated outputs during tracking)
+        # metadata for each tracking frame (e.g. which direction it's tracked)
+        inference_state["frames_tracked_per_obj"] = {}
+        # Warm up the visual backbone and cache the image feature on frame 0
+        self._get_image_feature(inference_state, frame_idx=0, batch_size=1)
+        
         if reset_exemplars:
             self.exemplars_dict = {}  # Reset exemplars if needed
 
@@ -247,7 +310,9 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
                 points = points / torch.tensor([video_W, video_H]).to(points.device)
             # scale the (normalized) coordinates by the model's internal image size
             points = points * self.image_size
-            
+        else:
+            points = points * self.com_scale_coefficient
+
         points = points.to(inference_state["device"])
         labels = labels.to(inference_state["device"])
         
@@ -635,7 +700,7 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
             com_point = self._define_center_of_mass(obj_mask)
             
             segmented_object = {
-                "mask": torch.tensor(obj_mask, dtype=torch.uint8, device=mask_semantic_bin.device),
+                "mask": torch.tensor(obj_mask, dtype=torch.uint8, device="cpu"),
                 "com_point": com_point,
             }
             segmented_objects_dict[local_obj_id] = segmented_object
