@@ -540,7 +540,6 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
         1. Perform semantic segmentation of all objects in a given slice with a set of exemplars.
         2. Define discrete objects in the semantic maske by performing connected component analysis.
         3. Define center of mass (CoM) for each object.
-        4. Perform CoM-management - remove those that correspond to already segmented objects.
         """
         # Step 1. Perform semantic segmentation.
         current_out, _ = self._segment_exemplars_in_slice(
@@ -552,7 +551,7 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
         # Step 2. Convert the predicted mask to binary
         pred_mask_semantic = torch.sigmoid(current_out["pred_masks"])
         pred_mask_semantic_bin = (pred_mask_semantic >= binarization_threshold).float()
-        
+                
         # pred_mask: torch.Size([1, 1, 256, 256])
         # pred_mask_high_res: torch.Size([1, 1, 1024, 1024])
         
@@ -567,15 +566,8 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
         
         # Points should be np.array([[com_x, com_y]], dtype=np.float32)
         # Center of mass is positive click with label np.array([1], np.int32)
+                
         
-        # Filter out objects that already exist in the inference state
-        filtered_objects_dict = self._filter_objects_coms(frame_idx, objects_dict, inference_state)
-        
-        # May need to perform that one for CoM management
-        # However, it can be also given from outside
-        # obj_idx = self._obj_id_to_idx(inference_state, obj_id)
-        # point_inputs_per_frame = inference_state["point_inputs_per_obj"][obj_idx]
-        # mask_inputs_per_frame = inference_state["mask_inputs_per_obj"][obj_idx]
         
         # May also need to check the coordinates
         obj_ids = inference_state["obj_ids"]
@@ -586,7 +578,7 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
             inference_state, current_out["pred_masks"]
         )
                 
-        return frame_idx, obj_ids, video_res_semantic_mask, filtered_objects_dict
+        return frame_idx, obj_ids, video_res_semantic_mask, objects_dict
     
     def _segment_exemplars_in_slice(self,
                                     inference_state,
@@ -730,83 +722,6 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
         com_x, com_y = max_dist_idx % w, max_dist_idx // w  # Convert to (x, y)
         
         return np.array([[com_x, com_y]], dtype=np.float32)
-    
-    def _filter_objects_coms(self, frame_idx, objects_dict, inference_state):
-        """
-        Filter and organize new objects for further segmentation.
-        """
-        filtered_objects_dict = {}
-        obj_idx_counter = len(inference_state["obj_id_to_idx"])  # Get global object ID counter
-
-        # Iterate through detected objects
-        for local_obj_id, obj_data in objects_dict.items():
-            obj_mask = obj_data["mask"]  # Binary mask for this object
-            com_point = obj_data["com_point"]  # Center of mass (low-res coordinates)
-
-            # Check if the center of mass is inside any existing segmentation mask
-            if self._is_point_inside_existing_object(inference_state, frame_idx, com_point):
-                continue  # Skip this object
-
-            # Assign a new global object ID
-            global_obj_idx = obj_idx_counter
-            obj_idx_counter += 1  # Increment for next object
-
-            # Store the new object
-            filtered_objects_dict[global_obj_idx] = {
-                "mask": obj_mask,
-                "com_point": com_point
-            }
-        
-        return filtered_objects_dict
-    
-    def _is_point_inside_existing_object(self, 
-                                         inference_state, 
-                                         frame_idx, 
-                                         com_point, 
-                                         binarization_threshold=0.5):
-        """
-        Check if the center of mass (CoM) is inside an already segmented object.
-
-        Args:
-            inference_state (dict): The current inference state.
-            frame_idx (int): The frame index being processed.
-            com_point (np.ndarray): The center of mass as np.array([[com_x, com_y]], dtype=np.float32).
-
-        Returns:
-            bool: True if the point is inside an existing object, False otherwise.
-        """
-        com_x, com_y = int(com_point[0][0]), int(com_point[0][1])  # Convert to integer indices
-        
-        # Iterate through existing objects' segmentation masks
-        for obj_idx in range(self._get_obj_num(inference_state)):  
-            obj_temp_output_dict = inference_state["temp_output_dict_per_obj"][obj_idx]
-            obj_output_dict = inference_state["output_dict_per_obj"][obj_idx]
-
-            # Check segmentation in `temp_output_dict_per_obj` (latest uncommitted results)
-            out = obj_temp_output_dict["cond_frame_outputs"].get(frame_idx, None)
-            if out is None:
-                out = obj_temp_output_dict["non_cond_frame_outputs"].get(frame_idx, None)
-            
-            # Check `output_dict_per_obj` (final stored segmentations)
-            if out is None:
-                out = obj_output_dict["cond_frame_outputs"].get(frame_idx, None)
-            if out is None:
-                out = obj_output_dict["non_cond_frame_outputs"].get(frame_idx, None)
-
-            # If still not found, skip this object
-            if out is None:
-                continue
-
-            # Ensure we are working with a binary mask
-            existing_mask = out["pred_masks"]  # This may contain logits
-            if existing_mask.dtype != torch.bool:  # Convert logits to binary mask
-                existing_mask = torch.sigmoid(existing_mask) >= binarization_threshold
-            
-            # Ensure correct shape and device
-            if existing_mask.shape[-2:] == (256, 256):  # Low-res space
-                if existing_mask[0, 0, com_y, com_x].item() > 0:  # Check if CoM is inside segmentation
-                    return True
-        return False    
     
     @torch.inference_mode()
     def propagate_exemplars_in_video(

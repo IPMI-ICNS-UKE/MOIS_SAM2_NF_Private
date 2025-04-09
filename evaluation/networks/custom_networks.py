@@ -290,7 +290,8 @@ class MOIS_SAM2Network(nn.Module):
                  exemplar_num,
                  exemplar_use_only_prompted,
                  filter_prev_prediction_components,
-                 overlap_threshold=0.5
+                 overlap_threshold=0.5,
+                 use_low_res_masks_for_com_detection=True
                  ):
         super().__init__()
         self.image_cache = ImageCache(cache_path)
@@ -308,6 +309,13 @@ class MOIS_SAM2Network(nn.Module):
         
         self.filter_prev_prediction_components = filter_prev_prediction_components
         self.overlap_threshold = overlap_threshold
+        self.use_low_res_masks_for_com_detection = use_low_res_masks_for_com_detection
+        if self.use_low_res_masks_for_com_detection:
+            # Set the scale factor to transform the center of a lesion mass 
+            # from low res 256x256 mask to the original 1024x1024.
+            self.com_scale_coefficient = 4
+        else:
+            self.com_scale_coefficient = 1
         
         GlobalHydra.instance().clear()
         initialize_config_dir(config_dir=model_dir)
@@ -451,9 +459,18 @@ class MOIS_SAM2Network(nn.Module):
                 if curr_area > 0 and (overlap_area / curr_area) >= self.overlap_threshold:
                     refined_pred[curr_mask] = 0  # Remove lesion from current prediction
         return refined_pred
+    
+    
+    def overlapping_coms(self, current_com, previous_pred):
+        full_size_com = current_com * self.com_scale_coefficient
+        full_size_com = full_size_com.astype(np.int32)
+        com_x, com_y = full_size_com[0][0], full_size_com[0][1]
+                
+        if previous_pred[com_y, com_x].item() > 0:
+            return True
+        return False
         
-    
-    
+        
     def run_3d_local_correction_mode(self,
                                      reset_state, 
                                      reset_exemplars,
@@ -548,13 +565,19 @@ class MOIS_SAM2Network(nn.Module):
                                                                                min_area_threshold=5)
                     
                     prediction_slice = np.zeros(tuple(prediction[:, :, slice_idx].shape)) 
-                    
+                    previous_prediction_slice = previous_prediction[:, :, slice_idx]
+                                        
                     for obj_idx, obj_data in filtered_objects_dict.items():
                         # ToDo: Check the format of the interaction point: np.array([[210, 350]], dtype=np.float32)
                         com_point = obj_data["com_point"]  # Center of mass point 
                         # com_point = [[com_point[0][1], com_point[0][0]]]
                         com_label = np.array([1], np.int32)
-                                    
+                        
+                        if self.filter_prev_prediction_components:
+                            if self.overlapping_coms(current_com=com_point,previous_pred=previous_prediction_slice):
+                                print("Skipping object")
+                                continue
+                        
                         # Add interaction points (positive label: 1)
                         _, _, current_mask_logits = predictor.add_new_points_or_box(
                             self.inference_state,
