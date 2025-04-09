@@ -20,6 +20,8 @@ from hydra.core.global_hydra import GlobalHydra
 from sam2.build_sam import build_sam2_video_predictor
 from sam2.build_mois_sam import build_mois_sam2_predictor
 
+from scipy.ndimage import label
+
 
 logger = logging.getLogger("evaluation_pipeline_logger")
 
@@ -286,7 +288,9 @@ class MOIS_SAM2Network(nn.Module):
                  exemplar_use_com,
                  exemplar_inference_all_slices,
                  exemplar_num,
-                 exemplar_use_only_prompted
+                 exemplar_use_only_prompted,
+                 filter_prev_prediction_components,
+                 overlap_threshold=0.5
                  ):
         super().__init__()
         self.image_cache = ImageCache(cache_path)
@@ -301,6 +305,9 @@ class MOIS_SAM2Network(nn.Module):
         self.exemplar_inference_all_slices = exemplar_inference_all_slices
         self.exemplar_num = exemplar_num
         self.exemplar_use_only_prompted = exemplar_use_only_prompted
+        
+        self.filter_prev_prediction_components = filter_prev_prediction_components
+        self.overlap_threshold = overlap_threshold
         
         GlobalHydra.instance().clear()
         initialize_config_dir(config_dir=model_dir)
@@ -342,6 +349,7 @@ class MOIS_SAM2Network(nn.Module):
             # - use exemplars to get new positive click prompts
             # - extended prompt-based + memory-based segmentation (no accumulation of exemplars)
             pass
+        
         elif (evaluation_mode == "lesion_wise_non_corrective") or (evaluation_mode == "lesion_wise_corrective"):
             if not call_exemplar_post_inference:
                 # Normal prompt-based and memory-based segmentation with exemplar bank accumulation
@@ -349,7 +357,7 @@ class MOIS_SAM2Network(nn.Module):
                                                            case_name, current_instance_id)
             else:
                 # Apply accumulated exemplar bank to segment objects as the final step after all interactions
-                output = self.run_3d_local_exemplar_post_inference(image, case_name)
+                output = self.run_3d_local_exemplar_post_inference(image, case_name, previous_global_prediction)
         else:
             raise ValueError("Evaluation mode is not supported")
         output = torch.Tensor(output).unsqueeze(0).unsqueeze(0)
@@ -420,6 +428,32 @@ class MOIS_SAM2Network(nn.Module):
         return fps, bps, sids
     
     
+    def remove_overlapping_lesions(self, current_pred, previous_pred):
+        # Label connected components in both masks
+        prev_labels, num_prev = label(previous_pred)
+        curr_labels, num_curr = label(current_pred)
+        
+        # Prepare a copy of current prediction for modification
+        refined_pred = current_pred.copy()
+
+        for prev_idx in range(1, num_prev + 1):
+            prev_mask = (prev_labels == prev_idx)
+
+            # Find overlapping current labels
+            overlapping_curr_labels = np.unique(curr_labels[prev_mask])
+            overlapping_curr_labels = overlapping_curr_labels[overlapping_curr_labels != 0]  # exclude background
+
+            for curr_idx in overlapping_curr_labels:
+                curr_mask = (curr_labels == curr_idx)
+                overlap_area = np.logical_and(prev_mask, curr_mask).sum()
+                curr_area = curr_mask.sum()
+                
+                if curr_area > 0 and (overlap_area / curr_area) >= self.overlap_threshold:
+                    refined_pred[curr_mask] = 0  # Remove lesion from current prediction
+        return refined_pred
+        
+    
+    
     def run_3d_local_correction_mode(self,
                                      reset_state, 
                                      reset_exemplars,
@@ -485,7 +519,8 @@ class MOIS_SAM2Network(nn.Module):
     
     def run_3d_local_exemplar_post_inference(self,
                                              image_tensor, 
-                                             case_name):
+                                             case_name,
+                                             previous_prediction):
         """
         This method is also called in the local correction mode, but after
         finishing all interactions on a lesion level and aggregating exemplar bank.
@@ -495,6 +530,9 @@ class MOIS_SAM2Network(nn.Module):
         video_dir = self.prepare_input_image_directory(case_name, image_tensor)
         
         prediction = np.zeros(tuple(image_tensor.shape))
+        if self.filter_prev_prediction_components:
+            previous_prediction = previous_prediction.squeeze().cpu().numpy()
+            
         
         if self.exemplar_use_com: # Use the center of mass definition
             
@@ -535,8 +573,12 @@ class MOIS_SAM2Network(nn.Module):
                         prediction_slice = np.maximum(prediction_slice, current_mask)
                     prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], prediction_slice)               
             
+            
+            
             else: # Definition of CoMs only on the prompted slices + propagation
                 pass
+            
+            
             
         else: # Use the binary prediction directly and independently on each slice
             if self.exemplar_inference_all_slices:
@@ -546,8 +588,15 @@ class MOIS_SAM2Network(nn.Module):
                      _, 
                      current_semantic_logits, 
                      _)= predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
-                    prediction[:, :, slice_idx] = (current_semantic_logits[0][0] > 0.0).cpu().numpy()
-            
+                    
+                    prediction_slice = (current_semantic_logits[0][0] > 0.0).cpu().numpy()
+                    
+                    if self.filter_prev_prediction_components:
+                        previous_prediction_slice = previous_prediction[:, :, slice_idx]
+                        prediction_slice = self.remove_overlapping_lesions(current_pred=prediction_slice, 
+                                                                           previous_pred=previous_prediction_slice)
+                    prediction[:, :, slice_idx] = prediction_slice
+                                
             else:
                 raise ValueError("Use case without center of mass dectection assumes exemplar inference on all slices!")
             

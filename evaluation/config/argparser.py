@@ -50,6 +50,7 @@ def parse_args():
     parser.add_argument('--exemplar_use_only_prompted', type=lambda x: bool(strtobool(x)), default=False, help="Use only prompted exemplars.")
     parser.add_argument('--exemplar_inference_all_slices', type=lambda x: bool(strtobool(x)), default=True, help="Use exemplar-based segmentation in all slices of an image.")
     parser.add_argument('--exemplar_num', type=int, default=8, help="Number of exemplars to use in the exemplar-based segmentation")
+    parser.add_argument('--filter_prev_prediction_components', type=lambda x: bool(strtobool(x)), default=True, help="Filter exemplar-based prediction according to the prompt-based results.")
 
     args = parser.parse_args()
     
