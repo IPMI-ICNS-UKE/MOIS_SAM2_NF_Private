@@ -322,6 +322,7 @@ class MOIS_SAM2Network(nn.Module):
         
         self.predictors = {}
         self.inference_state = None
+        self.prompted_slice_accumulator = set()
     
     
     def forward(self, x):
@@ -350,7 +351,7 @@ class MOIS_SAM2Network(nn.Module):
         call_exemplar_post_inference = x["call_exemplar_post_inference"]
         previous_local_prediction = x["previous_prediction"]
         previous_global_prediction = x["previous_global_prediction"]
-        
+                
         if evaluation_mode == "global_corrective":
             # Perform operations iteratively:
             # - prompt-based + memory-based segmentation + accumulate exemplars
@@ -490,7 +491,10 @@ class MOIS_SAM2Network(nn.Module):
         if reset_state:
             if self.inference_state:
                 predictor.reset_state(self.inference_state, reset_exemplars=reset_exemplars)
+                
             self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=reset_exemplars)
+            if reset_exemplars:
+                self.prompted_slice_accumulator = set()
         
         fps, bps, sids = self.extract_interaction_points_from_guidance(guidance)
         
@@ -499,6 +503,7 @@ class MOIS_SAM2Network(nn.Module):
         pred_forward = np.zeros(tuple(image_tensor.shape))
         
         for sid in sorted(sids):
+            self.prompted_slice_accumulator.add(sid)
             fp = fps.get(sid, [])
             bp = bps.get(sid, [])
             
@@ -570,7 +575,6 @@ class MOIS_SAM2Network(nn.Module):
                     for obj_idx, obj_data in filtered_objects_dict.items():
                         # ToDo: Check the format of the interaction point: np.array([[210, 350]], dtype=np.float32)
                         com_point = obj_data["com_point"]  # Center of mass point 
-                        # com_point = [[com_point[0][1], com_point[0][0]]]
                         com_label = np.array([1], np.int32)
                         
                         if self.filter_prev_prediction_components:
@@ -595,14 +599,63 @@ class MOIS_SAM2Network(nn.Module):
                         current_mask = (current_mask_logits[-1][0] > 0.0).cpu().numpy()
                         prediction_slice = np.maximum(prediction_slice, current_mask)
                     prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], prediction_slice)               
-            
-            
-            
-            else: # Definition of CoMs only on the prompted slices + propagation
-                pass
-            
-            
-            
+               
+            else: # Definition of CoMs only on the prompted slices + propagation                
+                debug_obj_id_list = []
+                
+                # Find objects in the prompted slices
+                for slice_idx in sorted(self.prompted_slice_accumulator):
+                    (_, 
+                     _, 
+                     _, 
+                     filtered_objects_dict)= predictor.find_exemplars_in_slice(self.inference_state, 
+                                                                               slice_idx,
+                                                                               binarization_threshold=0.5,
+                                                                               min_area_threshold=5)
+                    
+                    prediction_slice = np.zeros(tuple(prediction[:, :, slice_idx].shape)) 
+                    previous_prediction_slice = previous_prediction[:, :, slice_idx]
+                                        
+                    for obj_idx, obj_data in filtered_objects_dict.items():
+                        debug_obj_id_list.append(obj_idx)
+                        
+                        com_point = obj_data["com_point"]  # Center of mass point 
+                        com_label = np.array([1], np.int32)
+                        
+                        if self.filter_prev_prediction_components:
+                            if self.overlapping_coms(current_com=com_point,previous_pred=previous_prediction_slice):
+                                continue
+                        
+                        # Add interaction points (positive label: 1)
+                        _, _, current_mask_logits = predictor.add_new_points_or_box(
+                            self.inference_state,
+                            slice_idx,
+                            obj_idx,
+                            points=com_point,
+                            labels=com_label,
+                            is_com=True,
+                            clear_old_points=True,
+                            normalize_coords=False, # ToDo: Make sure this is correct
+                            box=None,
+                            add_exemplar=False
+                            )
+                        
+                        current_mask = (current_mask_logits[-1][0] > 0.0).cpu().numpy()
+                        prediction_slice = np.maximum(prediction_slice, current_mask)
+                    prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], prediction_slice)
+                                                    
+                pred_forward = np.zeros(tuple(image_tensor.shape))
+                for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, add_exemplar=False):
+                    pred_forward[:, :, out_frame_idx] = (out_mask_logits > 0.0).any(dim=0).squeeze(0).cpu().numpy()
+                    
+                pred_backward = np.zeros(tuple(image_tensor.shape))
+                for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, reverse=True, add_exemplar=False):
+                    pred_forward[:, :, out_frame_idx] = (out_mask_logits > 0.0).any(dim=0).squeeze(0).cpu().numpy()
+
+                # Merge forward and backward propagation
+                pred_propagated = np.logical_or(pred_forward, pred_backward) 
+                prediction = np.maximum(prediction, pred_propagated)
+
         else: # Use the binary prediction directly and independently on each slice
             if self.exemplar_inference_all_slices:
                 num_slices = image_tensor.shape[-1]
@@ -646,6 +699,8 @@ class MOIS_SAM2Network(nn.Module):
             if self.inference_state:
                 predictor.reset_state(self.inference_state, reset_exemplars=reset_exemplars)
             self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=reset_exemplars)
+            if reset_exemplars:
+                self.prompted_slice_accumulator = set()
         
         fps, bps, sids = self.extract_interaction_points_from_guidance(guidance)
         
