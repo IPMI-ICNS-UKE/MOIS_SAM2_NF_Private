@@ -410,7 +410,7 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
     def propagate_in_video(
         self,
         inference_state,
-        obj_id,
+        obj_id=None,
         start_frame_idx=None,
         max_frame_num_to_track=None,
         reverse=False,
@@ -420,6 +420,9 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
         Propagate the input points across frames to track in the entire video.
         Update functionality includes exemplars management.
         """
+        if add_exemplar:
+            assert obj_id is not None, "Error: obj_id must not be None if saving exemplar"
+        
         self.propagate_in_video_preflight(inference_state)
 
         obj_ids = inference_state["obj_ids"]
