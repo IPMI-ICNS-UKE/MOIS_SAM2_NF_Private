@@ -291,7 +291,8 @@ class MOIS_SAM2Network(nn.Module):
                  exemplar_use_only_prompted,
                  filter_prev_prediction_components,
                  overlap_threshold=0.5,
-                 use_low_res_masks_for_com_detection=True
+                 use_low_res_masks_for_com_detection=True,
+                 default_image_size = 1024,
                  ):
         super().__init__()
         self.image_cache = ImageCache(cache_path)
@@ -310,6 +311,8 @@ class MOIS_SAM2Network(nn.Module):
         self.filter_prev_prediction_components = filter_prev_prediction_components
         self.overlap_threshold = overlap_threshold
         self.use_low_res_masks_for_com_detection = use_low_res_masks_for_com_detection
+        self.default_image_size = default_image_size
+        
         if self.use_low_res_masks_for_com_detection:
             # Set the scale factor to transform the center of a lesion mass 
             # from low res 256x256 mask to the original 1024x1024.
@@ -357,7 +360,8 @@ class MOIS_SAM2Network(nn.Module):
             # - prompt-based + memory-based segmentation + accumulate exemplars
             # - use exemplars to get new positive click prompts
             # - extended prompt-based + memory-based segmentation (no accumulation of exemplars)
-            pass
+            output = self.run_3d_global_correction_mode(reset_state, reset_exemplars, image, guidance, 
+                                                        case_name, current_instance_id)
         
         elif (evaluation_mode == "lesion_wise_non_corrective") or (evaluation_mode == "lesion_wise_corrective"):
             if not call_exemplar_post_inference:
@@ -470,6 +474,8 @@ class MOIS_SAM2Network(nn.Module):
         if previous_pred[com_y, com_x].item() > 0:
             return True
         return False
+    
+    
         
         
     def run_3d_local_correction_mode(self,
@@ -554,7 +560,6 @@ class MOIS_SAM2Network(nn.Module):
         prediction = np.zeros(tuple(image_tensor.shape))
         if self.filter_prev_prediction_components:
             previous_prediction = previous_prediction.squeeze().cpu().numpy()
-            
         
         if self.exemplar_use_com: # Use the center of mass definition
             
@@ -677,14 +682,14 @@ class MOIS_SAM2Network(nn.Module):
                 raise ValueError("Use case without center of mass dectection assumes exemplar inference on all slices!")
             
         return prediction
-
-
+    
     def run_3d_global_correction_mode(self,
                                       reset_state, 
                                       reset_exemplars,
                                       image_tensor, 
                                       guidance, 
-                                      case_name):
+                                      case_name,
+                                      current_instance_id):
         """
         In the global correction mode exemplar-based segmentation (extrapolation of segmentation
         to other lesions) is performed right after each prompt-based segmentation with memory-based propagation.
@@ -704,5 +709,79 @@ class MOIS_SAM2Network(nn.Module):
         
         fps, bps, sids = self.extract_interaction_points_from_guidance(guidance)
         
+        # Initiate an empty prediction placeholder
+        prediction = np.zeros(tuple(image_tensor.shape))
+                    
+        ### Local inference
         # ToDo: Need to add interaction points obtained with exemplars!
+        
+        # 1. Add_all_interaction_points
+        pred_forward = np.zeros(tuple(image_tensor.shape))
+        for sid in sorted(sids):
+            self.prompted_slice_accumulator.add(sid)
+            fp = fps.get(sid, [])
+            bp = bps.get(sid, [])
+            
+            point_coords = fp + bp
+            point_coords = [[p[1], p[0]] for p in point_coords]  # Flip x,y => y,x
+            point_labels = [1] * len(fp) + [0] * len(bp)
+            logger.info(f"{sid} - Coords: {point_coords}; Labels: {point_labels}")
+            o_frame_ids, o_obj_ids, o_mask_logits = predictor.add_new_points_or_box(
+                inference_state=self.inference_state,
+                frame_idx=sid,
+                obj_id=current_instance_id,
+                points=np.array(point_coords) if point_coords else None,
+                labels=np.array(point_labels) if point_labels else None,
+                box=None,
+                is_com=False, # In this case the interaction points are not obtained via exemplars
+                add_exemplar=True 
+            )
+            pred_forward[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
+                
+        # 2. Propagate in video
+        # Forward-slice memory-based propagation + add non-prompted exemplars
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, add_exemplar=True):
+            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
+            pred_forward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
+        
+        #  Backward-slice memory-based propagation + add non-prompted exemplars
+        pred_backward = np.zeros(tuple(image_tensor.shape))
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, reverse=True, add_exemplar=True):
+            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
+            pred_backward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
+                
+        # Merge forward and backward propagation
+        prediction = np.logical_or(pred_forward, pred_backward)
+                
+        ### Global inference
+        if self.exemplar_use_com: # Use the center of mass definition
+            
+            if self.exemplar_inference_all_slices: # Definition of CoMs on all slices independently
+                pass
+            
+            else: # Definition of CoMs only on the prompted slices + propagation
+                pass
+        
+        else: # Use the binary prediction directly and independently on each slice
+
+            if self.exemplar_inference_all_slices: 
+                num_slices = image_tensor.shape[-1]
+                for slice_idx in range(0, num_slices):
+                    (_, 
+                     _, 
+                     current_semantic_logits, 
+                     _)= predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
+                    
+                    prediction_slice = (current_semantic_logits[0][0] > 0.0).cpu().numpy()
+                                        
+                    if self.filter_prev_prediction_components:
+                        previous_prediction_slice = prediction[:, :, slice_idx]
+                        prediction_slice = self.remove_overlapping_lesions(current_pred=prediction_slice, 
+                                                                           previous_pred=previous_prediction_slice)
+                                                
+                    prediction[:, :, slice_idx] = np.maximum(prediction_slice, prediction[:, :, slice_idx])
+            else:
+                raise ValueError("Use case without center of mass dectection assumes exemplar inference on all slices!")
+            
+        return prediction
    
