@@ -51,7 +51,6 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
             self.com_scale_coefficient = 4
         else:
             self.com_scale_coefficient = 1
-            raise ValueError("An option to perform center of a lesion mass detection in original resolution is not implemented yet!")
     
     def init_state(self, video_path, 
                    offload_video_to_cpu=False,
@@ -311,7 +310,13 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
             # scale the (normalized) coordinates by the model's internal image size
             points = points * self.image_size
         else:
-            points = points * self.com_scale_coefficient
+            if normalize_coords:
+                video_H = inference_state["video_height"]
+                video_W = inference_state["video_width"]
+                points = points / torch.tensor([video_W, video_H]).to(points.device)
+                points = points * self.image_size
+            else:
+                points = points * self.com_scale_coefficient
 
         points = points.to(inference_state["device"])
         labels = labels.to(inference_state["device"])
@@ -552,27 +557,24 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
             )
         
         # Step 2. Convert the predicted mask to binary
-        pred_mask_semantic = torch.sigmoid(current_out["pred_masks"])
-        pred_mask_semantic_bin = (pred_mask_semantic >= binarization_threshold).float()
-                
         # pred_mask: torch.Size([1, 1, 256, 256])
         # pred_mask_high_res: torch.Size([1, 1, 1024, 1024])
+        if self.use_low_res_masks_for_com_detection:
+            pred_mask_logits = current_out["pred_masks"]
+        else:
+            pred_mask_logits = current_out["pred_masks_high_res"]
         
-        # Now I am using low-res prediction, therefore, 
-        # the center of mass are going to be in low-res coordinates.
+        pred_mask_semantic = torch.sigmoid(pred_mask_logits)
+        pred_mask_semantic_bin = (pred_mask_semantic >= binarization_threshold).float()
         objects_dict = self._extract_objects(pred_mask_semantic_bin, min_area_threshold)
         
         # The dictionary contains:
         # {local_obj_id:
         # {"mask": binary_mask_for_object,
         #  "com_point": center_of_mass_point}}
-        
         # Points should be np.array([[com_x, com_y]], dtype=np.float32)
         # Center of mass is positive click with label np.array([1], np.int32)
-                
         
-        
-        # May also need to check the coordinates
         obj_ids = inference_state["obj_ids"]
         
         # Restore original resolution for the semantic segmentation mask
