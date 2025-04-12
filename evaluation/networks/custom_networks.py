@@ -223,7 +223,7 @@ class SAM2Network(nn.Module):
                         kps[sid] = [[point[0], point[1]]]
 
         # Forward propagation
-        pred_forward = np.zeros(tuple(image_tensor.shape))
+        pred = np.zeros(tuple(image_tensor.shape))
         for sid in sorted(sids):
             fp = fps.get(sid, [])
             bp = bps.get(sid, [])
@@ -241,8 +241,9 @@ class SAM2Network(nn.Module):
                 labels=np.array(point_labels) if point_labels else None,
                 box=None,
             )
-            pred_forward[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
+            pred[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
         
+        pred_forward = np.zeros(tuple(image_tensor.shape))
         for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state):
             logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
             pred_forward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
@@ -254,7 +255,8 @@ class SAM2Network(nn.Module):
             pred_backward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
         
         # Merge forward and backward propagation
-        pred = np.logical_or(pred_forward, pred_backward) 
+        pred_prop = np.logical_or(pred_forward, pred_backward) 
+        pred = np.logical_or(pred, pred_prop) 
         return pred
     
     def forward(self, x):
@@ -279,6 +281,7 @@ class SAM2Network(nn.Module):
         output = torch.Tensor(output).unsqueeze(0).unsqueeze(0)
         return output.to(self.device)
 
+
 class MOIS_SAM2Network(nn.Module):
     def __init__(self, 
                  model_path, 
@@ -293,6 +296,7 @@ class MOIS_SAM2Network(nn.Module):
                  overlap_threshold=0.5,
                  use_low_res_masks_for_com_detection=True,
                  default_image_size = 1024,
+                 min_lesion_area_threshold = 40 # For filtering exemplar-based segmentation
                  ):
         super().__init__()
         self.image_cache = ImageCache(cache_path)
@@ -320,6 +324,8 @@ class MOIS_SAM2Network(nn.Module):
         else:
             self.com_scale_coefficient = 1
         
+        self.min_lesion_area_threshold = min_lesion_area_threshold * (self.com_scale_coefficient ** 2)
+        
         GlobalHydra.instance().clear()
         initialize_config_dir(config_dir=model_dir)
         
@@ -327,17 +333,25 @@ class MOIS_SAM2Network(nn.Module):
         self.inference_state = None
         self.prompted_slice_accumulator = set()
     
-    
     def forward(self, x):
         """
         Performs segmentation inference using SAM2 model.
 
         Args:
-            x (Dict[str, Any]): Dictionary containing:
-                - `"image"`: 3D image tensor.
-                - `"guidance"`: Interaction guidance points.
-                - `"case_name"`: Case identifier.
-                - `"reset_state"`: Boolean flag to reset the inference state.
+        x (Dict[str, Any]): A dictionary containing:
+            - "image" (torch.Tensor): 3D image tensor of shape (1, 1, H, W, D).
+            - "guidance" (Any): User interaction guidance (e.g., clicks, boxes).
+            - "case_name" (str): Identifier of the current case.
+            - "reset_state" (bool): If True, resets the internal memory/state before inference.
+            - "reset_exemplars" (bool): If True, resets the exemplar memory bank before inference.
+            - "evaluation_mode" (str): Inference mode; one of:
+                - "global_corrective": Uses memory-based correction with exemplar refinement.
+                - "lesion_wise_non_corrective": Lesion-wise segmentation without post-hoc exemplar inference.
+                - "lesion_wise_corrective": Lesion-wise segmentation with potential post-hoc exemplar inference.
+            - "current_instance_id" (int): ID of the current lesion/object being segmented.
+            - "call_exemplar_post_inference" (bool): If True, performs final inference using exemplar-based refinement.
+            - "previous_global_prediction" (np.ndarray or torch.Tensor): Prior segmentation result used as input
+              for final exemplar inference (only relevant if call_exemplar_post_inference is True).
 
         Returns:
             torch.Tensor: Segmentation prediction of shape `(1, 1, H, W, D)`.
@@ -352,7 +366,6 @@ class MOIS_SAM2Network(nn.Module):
         
         current_instance_id = x["current_instance_id"]
         call_exemplar_post_inference = x["call_exemplar_post_inference"]
-        previous_local_prediction = x["previous_prediction"]
         previous_global_prediction = x["previous_global_prediction"]
                 
         if evaluation_mode == "global_corrective":
@@ -376,7 +389,6 @@ class MOIS_SAM2Network(nn.Module):
         output = torch.Tensor(output).unsqueeze(0).unsqueeze(0)
         return output.to(self.device)
     
-    
     def get_predictor(self):
         predictor = self.predictors.get(self.device)
         
@@ -393,8 +405,9 @@ class MOIS_SAM2Network(nn.Module):
             self.predictors[self.device] = predictor
             predictor.num_max_exemplars = self.exemplar_num
             predictor.exemplar_use_only_prompted = self.exemplar_use_only_prompted
+            predictor.use_low_res_masks_for_com_detection = self.use_low_res_masks_for_com_detection
+            predictor.com_scale_coefficient = self.com_scale_coefficient
         return predictor
-    
     
     def prepare_input_image_directory(self, case_name, image_tensor):
         video_dir = os.path.join(
@@ -414,7 +427,6 @@ class MOIS_SAM2Network(nn.Module):
         # Set expiry time for cached images
         self.image_cache.cached_dirs[video_dir] = time() + self.image_cache.cache_expiry_sec
         return video_dir
-    
     
     def extract_interaction_points_from_guidance(self, guidance):
         fps: dict[int, Any] = {}
@@ -475,9 +487,6 @@ class MOIS_SAM2Network(nn.Module):
             return True
         return False
     
-    
-        
-        
     def run_3d_local_correction_mode(self,
                                      reset_state, 
                                      reset_exemplars,
@@ -506,7 +515,7 @@ class MOIS_SAM2Network(nn.Module):
         
         # Add interaction points, perform instance prompt-based segmentation in a given slice 
         # and add prompted exemplars (if it is not empty)
-        pred_forward = np.zeros(tuple(image_tensor.shape))
+        pred = np.zeros(tuple(image_tensor.shape))
         
         for sid in sorted(sids):
             self.prompted_slice_accumulator.add(sid)
@@ -527,9 +536,10 @@ class MOIS_SAM2Network(nn.Module):
                 is_com=False, # In this case the interaction points are not obtained via exemplars
                 add_exemplar=True 
             )
-            pred_forward[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
+            pred[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
             
         # Forward-slice memory-based propagation + add non-prompted exemplars
+        pred_forward = np.zeros(tuple(image_tensor.shape))
         for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, add_exemplar=True):
             logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
             pred_forward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
@@ -541,147 +551,122 @@ class MOIS_SAM2Network(nn.Module):
             pred_backward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
                 
         # Merge forward and backward propagation
-        pred = np.logical_or(pred_forward, pred_backward) 
+        pred_prop = np.logical_or(pred_forward, pred_backward) 
+        pred = np.logical_or(pred, pred_prop) 
         return pred
     
-    
-    def run_3d_local_exemplar_post_inference(self,
-                                             image_tensor, 
-                                             case_name,
-                                             previous_prediction):
+    def run_3d_local_exemplar_post_inference(self, image_tensor, case_name, previous_prediction):
         """
-        This method is also called in the local correction mode, but after
-        finishing all interactions on a lesion level and aggregating exemplar bank.
-        This method uses the exemplars bank to extrapolate segmentation to other lesions.
+        Applies the exemplar bank to extrapolate segmentation to other lesions after
+        all interactions on a lesion have been completed.
+
+        Supports three inference strategies:
+        - COM detection on all slices
+        - COM detection only on prompted slices followed by temporal propagation
+        - Semantic mask-based inference when COM is not used
         """
+        # Initialization
         predictor = self.get_predictor()
         video_dir = self.prepare_input_image_directory(case_name, image_tensor)
-        
         prediction = np.zeros(tuple(image_tensor.shape))
-        if self.filter_prev_prediction_components:
-            previous_prediction = previous_prediction.squeeze().cpu().numpy()
         
-        if self.exemplar_use_com: # Use the center of mass definition
+        previous_prediction = previous_prediction.squeeze().cpu().numpy()
             
-            if self.exemplar_inference_all_slices: # Definition of CoMs on all slices independently
-                num_slices = image_tensor.shape[-1]
-                for slice_idx in range(0, num_slices):
-                    (_, 
-                     _, 
-                     _, 
-                     filtered_objects_dict)= predictor.find_exemplars_in_slice(self.inference_state, 
-                                                                               slice_idx,
-                                                                               binarization_threshold=0.5,
-                                                                               min_area_threshold=5)
-                    
-                    prediction_slice = np.zeros(tuple(prediction[:, :, slice_idx].shape)) 
-                    previous_prediction_slice = previous_prediction[:, :, slice_idx]
-                                        
-                    for obj_idx, obj_data in filtered_objects_dict.items():
-                        # ToDo: Check the format of the interaction point: np.array([[210, 350]], dtype=np.float32)
-                        com_point = obj_data["com_point"]  # Center of mass point 
-                        com_label = np.array([1], np.int32)
-                        
-                        if self.filter_prev_prediction_components:
-                            if self.overlapping_coms(current_com=com_point,previous_pred=previous_prediction_slice):
-                                print("Skipping object")
-                                continue
-                        
-                        # Add interaction points (positive label: 1)
-                        _, _, current_mask_logits = predictor.add_new_points_or_box(
-                            self.inference_state,
-                            slice_idx,
-                            obj_idx,
-                            points=com_point,
-                            labels=com_label,
-                            is_com=True,
-                            clear_old_points=True,
-                            normalize_coords=False, # ToDo: Make sure this is correct
-                            box=None,
-                            add_exemplar=False
-                            )
-                        
-                        current_mask = (current_mask_logits[-1][0] > 0.0).cpu().numpy()
-                        prediction_slice = np.maximum(prediction_slice, current_mask)
-                    prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], prediction_slice)               
-               
-            else: # Definition of CoMs only on the prompted slices + propagation                
-                debug_obj_id_list = []
-                
+            
+        def apply_com_masking(filtered_objects_dict, slice_idx, obj_counter):
+            """Apply COM points to predictor for a given slice and return mask."""
+            slice_pred = np.zeros_like(prediction[:, :, slice_idx])
+            prev_pred_slice = previous_prediction[:, :, slice_idx]
+            for obj_idx, obj_data in filtered_objects_dict.items():
+                com_point = obj_data["com_point"]
+                com_label = np.array([1], np.int32)
+
+                if self.filter_prev_prediction_components and self.overlapping_coms(com_point, prev_pred_slice):
+                    continue
+
+                obj_counter += 1
+                logger.info(f"{slice_idx} - {obj_counter} - Coords: {com_point}; Labels: {com_label}")
+                _, _, mask_logits = predictor.add_new_points_or_box(
+                    self.inference_state, 
+                    slice_idx, 
+                    obj_counter,
+                    points=com_point, 
+                    labels=com_label,
+                    clear_old_points=True, # Need to remove all previous points
+                    is_com=True, 
+                    normalize_coords=False, # Do not need to normalize, since COM is either in 1024x1024 or 256x256
+                    add_exemplar=False,
+                    box=None,
+                )
+                mask = (mask_logits[-1][0] > 0.0).cpu().numpy()
+                slice_pred = np.maximum(slice_pred, mask)
+            return slice_pred, obj_counter
+        
+        if self.exemplar_use_com: 
+            # Use the center of mass definition
+            predictor.reset_state(self.inference_state, reset_exemplars=False)
+            self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=False)
+            object_counter = 0 # Initialize the counter that will be used to provide unique object IDs
+
+            if self.exemplar_inference_all_slices: 
+                # Definition of CoMs on all slices independently
+                for slice_idx in range(image_tensor.shape[-1]):
+                    _, _, _, filtered_objs = predictor.find_exemplars_in_slice(
+                        self.inference_state, 
+                        slice_idx,
+                        binarization_threshold=0.5,
+                        min_area_threshold=self.min_lesion_area_threshold
+                    )
+                    pred_slice, object_counter = apply_com_masking(filtered_objs, slice_idx, object_counter)
+                    prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], pred_slice)
+                            
+            else: 
+                # Definition of CoMs only on the prompted slices + propagation                                
                 # Find objects in the prompted slices
                 for slice_idx in sorted(self.prompted_slice_accumulator):
-                    (_, 
-                     _, 
-                     _, 
-                     filtered_objects_dict)= predictor.find_exemplars_in_slice(self.inference_state, 
-                                                                               slice_idx,
-                                                                               binarization_threshold=0.5,
-                                                                               min_area_threshold=5)
-                    
-                    prediction_slice = np.zeros(tuple(prediction[:, :, slice_idx].shape)) 
-                    previous_prediction_slice = previous_prediction[:, :, slice_idx]
-                                        
-                    for obj_idx, obj_data in filtered_objects_dict.items():
-                        debug_obj_id_list.append(obj_idx)
-                        
-                        com_point = obj_data["com_point"]  # Center of mass point 
-                        com_label = np.array([1], np.int32)
-                        
-                        if self.filter_prev_prediction_components:
-                            if self.overlapping_coms(current_com=com_point,previous_pred=previous_prediction_slice):
-                                continue
-                        
-                        # Add interaction points (positive label: 1)
-                        _, _, current_mask_logits = predictor.add_new_points_or_box(
-                            self.inference_state,
-                            slice_idx,
-                            obj_idx,
-                            points=com_point,
-                            labels=com_label,
-                            is_com=True,
-                            clear_old_points=True,
-                            normalize_coords=False, # ToDo: Make sure this is correct
-                            box=None,
-                            add_exemplar=False
-                            )
-                        
-                        current_mask = (current_mask_logits[-1][0] > 0.0).cpu().numpy()
-                        prediction_slice = np.maximum(prediction_slice, current_mask)
-                    prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], prediction_slice)
-                                                    
-                pred_forward = np.zeros(tuple(image_tensor.shape))
-                for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, add_exemplar=False):
-                    pred_forward[:, :, out_frame_idx] = (out_mask_logits > 0.0).any(dim=0).squeeze(0).cpu().numpy()
-                    
-                pred_backward = np.zeros(tuple(image_tensor.shape))
-                for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, reverse=True, add_exemplar=False):
-                    pred_forward[:, :, out_frame_idx] = (out_mask_logits > 0.0).any(dim=0).squeeze(0).cpu().numpy()
+                    _, _, _, filtered_objs = predictor.find_exemplars_in_slice(
+                        self.inference_state, 
+                        slice_idx,
+                        binarization_threshold=0.5,
+                        min_area_threshold=self.min_lesion_area_threshold
+                    )
+                    pred_slice, object_counter = apply_com_masking(filtered_objs, slice_idx, object_counter)
+                    prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], pred_slice)
+                                                        
+                # Propagate in both directions
+                def propagate(reverse=False):
+                    pred_temp = np.zeros(image_tensor.shape)
+                    for idx, _, logits in predictor.propagate_in_video(
+                        self.inference_state, 
+                        reverse=reverse, 
+                        add_exemplar=False
+                    ):
+                        pred_temp[:, :, idx] = (logits > 0.0).any(dim=0).squeeze(0).cpu().numpy()
+                    return pred_temp
 
                 # Merge forward and backward propagation
-                pred_propagated = np.logical_or(pred_forward, pred_backward) 
+                pred_forward = propagate(reverse=False)
+                pred_backward = propagate(reverse=True)
+                pred_propagated = np.logical_or(pred_forward, pred_backward)
                 prediction = np.maximum(prediction, pred_propagated)
 
-        else: # Use the binary prediction directly and independently on each slice
-            if self.exemplar_inference_all_slices:
-                num_slices = image_tensor.shape[-1]
-                for slice_idx in range(0, num_slices):
-                    (_, 
-                     _, 
-                     current_semantic_logits, 
-                     _)= predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
-                    
-                    prediction_slice = (current_semantic_logits[0][0] > 0.0).cpu().numpy()
-                    
-                    if self.filter_prev_prediction_components:
-                        previous_prediction_slice = previous_prediction[:, :, slice_idx]
-                        prediction_slice = self.remove_overlapping_lesions(current_pred=prediction_slice, 
-                                                                           previous_pred=previous_prediction_slice)
-                    prediction[:, :, slice_idx] = prediction_slice
-                                
-            else:
-                raise ValueError("Use case without center of mass dectection assumes exemplar inference on all slices!")
+        else: 
+            # Use the binary prediction directly and independently on each slice
+            if not self.exemplar_inference_all_slices:
+                raise ValueError("Use case without center of mass detection assumes exemplar inference on all slices!")
+
+            for slice_idx in range(image_tensor.shape[-1]):
+                _, _, semantic_logits, _ = predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
+                pred_slice = (semantic_logits[0][0] > 0.0).cpu().numpy()
+
+                if self.filter_prev_prediction_components:
+                    prev_pred_slice = previous_prediction[:, :, slice_idx]
+                    pred_slice = self.remove_overlapping_lesions(current_pred=pred_slice, previous_pred=prev_pred_slice)
+
+                prediction[:, :, slice_idx] = pred_slice
             
         return prediction
+
     
     def run_3d_global_correction_mode(self,
                                       reset_state, 
@@ -691,97 +676,151 @@ class MOIS_SAM2Network(nn.Module):
                                       case_name,
                                       current_instance_id):
         """
-        In the global correction mode exemplar-based segmentation (extrapolation of segmentation
-        to other lesions) is performed right after each prompt-based segmentation with memory-based propagation.
-        The goal of exemplar-based segmentation is to find center of masses of all lesions and them to 
-        the list of original prompts (both positive and negative). The updated prompt list can be used for inference.
+        Global corrective segmentation mode.
+
+        This mode supports three segmentation strategies:
+        - Prompt-based segmentation with memory-based propagation (forward + backward).
+        - Optional global inference via exemplar-based COM (center of mass) detection.
+        - Optional semantic segmentation using exemplar masks directly (without COM).
+
+        Args:
+            reset_state (bool): Whether to reset the inference state.
+            reset_exemplars (bool): Whether to reset the exemplar memory bank.
+            image_tensor (torch.Tensor): The 3D image of shape (H, W, D).
+            guidance (Dict[str, torch.Tensor]): Click-based or box-based prompts for segmentation.
+            case_name (str): Identifier of the current case.
+            current_instance_id (int): ID of the current object being segmented.
+
+        Returns:
+            np.ndarray: 3D segmentation mask of shape (H, W, D).
         """
         predictor = self.get_predictor()
         video_dir = self.prepare_input_image_directory(case_name, image_tensor)
         
-        # Initialize inference state if required
-        if reset_state:
-            if self.inference_state:
-                predictor.reset_state(self.inference_state, reset_exemplars=reset_exemplars)
-            self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=reset_exemplars)
-            if reset_exemplars:
-                self.prompted_slice_accumulator = set()
+        if self.inference_state:
+            predictor.reset_state(self.inference_state, reset_exemplars=reset_exemplars)
+                
+        self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=reset_exemplars)
+        if reset_exemplars:
+            self.prompted_slice_accumulator = set()
         
         fps, bps, sids = self.extract_interaction_points_from_guidance(guidance)
-        
-        # Initiate an empty prediction placeholder
         prediction = np.zeros(tuple(image_tensor.shape))
-                    
-        ### Local inference
-        # ToDo: Need to add interaction points obtained with exemplars!
         
-        # 1. Add_all_interaction_points
-        pred_forward = np.zeros(tuple(image_tensor.shape))
+        # === Prompted slice segmentation ===        
         for sid in sorted(sids):
             self.prompted_slice_accumulator.add(sid)
             fp = fps.get(sid, [])
             bp = bps.get(sid, [])
-            
-            point_coords = fp + bp
-            point_coords = [[p[1], p[0]] for p in point_coords]  # Flip x,y => y,x
+            point_coords = [[p[1], p[0]] for p in (fp + bp)]
             point_labels = [1] * len(fp) + [0] * len(bp)
+            
             logger.info(f"{sid} - Coords: {point_coords}; Labels: {point_labels}")
-            o_frame_ids, o_obj_ids, o_mask_logits = predictor.add_new_points_or_box(
+            _, _, o_mask_logits = predictor.add_new_points_or_box(
                 inference_state=self.inference_state,
                 frame_idx=sid,
                 obj_id=current_instance_id,
                 points=np.array(point_coords) if point_coords else None,
                 labels=np.array(point_labels) if point_labels else None,
+                is_com=False,
+                add_exemplar=True,
                 box=None,
-                is_com=False, # In this case the interaction points are not obtained via exemplars
-                add_exemplar=True 
             )
-            pred_forward[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
-                
-        # 2. Propagate in video
-        # Forward-slice memory-based propagation + add non-prompted exemplars
-        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, add_exemplar=True):
-            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
-            pred_forward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
+            prediction[:, :, sid] = (o_mask_logits[0][0] > 0.0).cpu().numpy()
         
-        #  Backward-slice memory-based propagation + add non-prompted exemplars
-        pred_backward = np.zeros(tuple(image_tensor.shape))
-        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, reverse=True, add_exemplar=True):
-            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
-            pred_backward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
-                
-        # Merge forward and backward propagation
-        prediction = np.logical_or(pred_forward, pred_backward)
-                
-        ### Global inference
-        if self.exemplar_use_com: # Use the center of mass definition
-            
-            if self.exemplar_inference_all_slices: # Definition of CoMs on all slices independently
-                pass
-            
-            else: # Definition of CoMs only on the prompted slices + propagation
-                pass
+        # === Forward and backward memory propagation ===
+        def propagate_and_merge(reverse=False):
+            pred = np.zeros(image_tensor.shape)
+            for idx, _, logits in predictor.propagate_in_video(self.inference_state,
+                                                            obj_id=current_instance_id,
+                                                            reverse=reverse,
+                                                            add_exemplar=True):
+                pred[:, :, idx] = (logits[0][0] > 0.0).cpu().numpy()
+            return pred
         
-        else: # Use the binary prediction directly and independently on each slice
+        prediction = np.logical_or(prediction,
+                                   propagate_and_merge(reverse=False))
+        prediction = np.logical_or(prediction,
+                                   propagate_and_merge(reverse=True))
+        
+        # === Global inference with exemplars ===
+        if self.exemplar_use_com: 
+            # Use the center of mass definition
+            predictor.reset_state(self.inference_state, reset_exemplars=False)
+            self.inference_state = predictor.init_state(video_path=video_dir, reset_exemplars=False)
+            object_counter = 0
+            
+            def collect_com_inference(slice_indices):
+                nonlocal object_counter
+                for slice_idx in slice_indices:
+                    _, _, _, objects = predictor.find_exemplars_in_slice(
+                        self.inference_state, slice_idx,
+                        binarization_threshold=0.5,
+                        min_area_threshold=self.min_lesion_area_threshold)
 
-            if self.exemplar_inference_all_slices: 
-                num_slices = image_tensor.shape[-1]
-                for slice_idx in range(0, num_slices):
-                    (_, 
-                     _, 
-                     current_semantic_logits, 
-                     _)= predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
-                    
-                    prediction_slice = (current_semantic_logits[0][0] > 0.0).cpu().numpy()
-                                        
-                    if self.filter_prev_prediction_components:
-                        previous_prediction_slice = prediction[:, :, slice_idx]
-                        prediction_slice = self.remove_overlapping_lesions(current_pred=prediction_slice, 
-                                                                           previous_pred=previous_prediction_slice)
-                                                
-                    prediction[:, :, slice_idx] = np.maximum(prediction_slice, prediction[:, :, slice_idx])
-            else:
-                raise ValueError("Use case without center of mass dectection assumes exemplar inference on all slices!")
+                    pred_slice = np.zeros(image_tensor.shape[:2])
+                    bp = bps.get(slice_idx, [])
+                    if bp:
+                        scale_x = self.default_image_size / self.inference_state["video_width"]
+                        scale_y = self.default_image_size / self.inference_state["video_height"]
+                        bp = [[int(p[1] * scale_x / self.com_scale_coefficient),
+                            int(p[0] * scale_y / self.com_scale_coefficient)] for p in bp]
+
+                    for _, obj_data in objects.items():
+                        com_point = obj_data["com_point"][0].astype(int) * self.com_scale_coefficient
+                        fp = [[com_point[0], com_point[1]]]
+                        points = fp + bp
+                        labels = [1] * len(fp) + [0] * len(bp)
+
+                        if self.filter_prev_prediction_components:
+                            prev_slice = prediction[:, :, slice_idx]
+                            if self.overlapping_coms(current_com=com_point, previous_pred=prev_slice):
+                                continue
+
+                        object_counter += 1
+                        logger.info(f"{slice_idx} - {object_counter} - Coords: {points}; Labels: {labels}")
+                        _, _, logits = predictor.add_new_points_or_box(
+                            self.inference_state, slice_idx, object_counter,
+                            points=points, labels=labels,
+                            is_com=True, clear_old_points=True,
+                            normalize_coords=False, box=None, add_exemplar=False)
+                        current_mask = (logits[-1][0] > 0.0).cpu().numpy()
+                        pred_slice = np.maximum(pred_slice, current_mask)
+
+                    prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], pred_slice)
+
             
+            if self.exemplar_inference_all_slices: 
+                # Definition of CoMs on all slices independently
+                collect_com_inference(range(image_tensor.shape[-1]))
+
+            else: 
+                # Definition of CoMs only on the prompted slices + propagation
+                collect_com_inference(sorted(self.prompted_slice_accumulator))
+                
+                # Final propagation
+                prediction = np.maximum(
+                    prediction,
+                    np.logical_or(
+                        propagate_and_merge(reverse=False),
+                        propagate_and_merge(reverse=True)
+                    )
+                )
+
+        else: 
+            # === Direct semantic inference from masks ===
+            if not self.exemplar_inference_all_slices:
+                raise ValueError("Use case without center of mass detection assumes exemplar inference on all slices!")
+
+            for slice_idx in range(image_tensor.shape[-1]):
+                _, _, logits, _ = predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
+                pred_slice = (logits[0][0] > 0.0).cpu().numpy()
+
+                if self.filter_prev_prediction_components:
+                    prev_slice = prediction[:, :, slice_idx]
+                    pred_slice = self.remove_overlapping_lesions(current_pred=pred_slice, previous_pred=prev_slice)
+
+                prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], pred_slice)
+
         return prediction
    
