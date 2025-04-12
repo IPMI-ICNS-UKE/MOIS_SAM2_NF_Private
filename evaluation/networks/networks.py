@@ -78,7 +78,9 @@ def get_network(args, device):
                                    exemplar_inference_all_slices=args.exemplar_inference_all_slices,
                                    exemplar_num=args.exemplar_num,
                                    exemplar_use_only_prompted=args.exemplar_use_only_prompted,
-                                   filter_prev_prediction_components=args.filter_prev_prediction_components
+                                   filter_prev_prediction_components=args.filter_prev_prediction_components,
+                                   use_low_res_masks_for_com_detection=args.use_low_res_masks_for_com_detection,
+                                   min_lesion_area_threshold=args.min_lesion_area_threshold
                                    )
     else:
         raise ValueError(f"Unsupported network: {args.network_type}")
