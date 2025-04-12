@@ -43,7 +43,9 @@ SPACING_FOR_SIMPLECLICK = (-1, -1, -1)
 ORIENTATION_FOR_SIMPLECLICK = ("RSA") 
 TARGET_SIZE_FOR_SIMPLECLICK = (1024, 1024, -1)
 SPACING_FOR_SAM2 = (-1, -1, -1)
-ORIENTATION_FOR_SAM2 = ("SRA")
+ORIENTATION_FOR_SAM2 = ("RSA")
+SPACING_FOR_MOISSAM2 = (-1, -1, -1)
+ORIENTATION_FOR_MOISSAM2 = ("SRA")
 TARGET_SIZE_FOR_MOISSAM2 = (1024, 1024, -1)
 
 
@@ -129,10 +131,20 @@ def get_pre_transforms(args,
             ]
         )
         
-    elif (args.network_type == "SAM2") or (args.network_type == "MOIS_SAM2"):
+    elif args.network_type == "SAM2":
         spacing = SPACING_FOR_SAM2
         orientation = ORIENTATION_FOR_SAM2
-        target_size = TARGET_SIZE_FOR_MOISSAM2
+        transforms.extend(
+            [
+                Orientationd(keys=input_keys, axcodes=orientation),
+                ScaleIntensityRangePercentilesd(keys="image", lower=0.5, upper=99.5, 
+                                                b_min=0.0, b_max=255.0, clip=True),
+            ]
+        )
+
+    elif args.network_type == "MOIS_SAM2":
+        spacing = SPACING_FOR_MOISSAM2
+        orientation = ORIENTATION_FOR_MOISSAM2
         transforms.extend(
             [
                 Orientationd(keys=input_keys, axcodes=orientation),
@@ -140,8 +152,6 @@ def get_pre_transforms(args,
                 Flipd(input_keys, spatial_axis=1),
                 ScaleIntensityRangePercentilesIgnoreZerod(keys="image", lower=0.5, upper=99.5, 
                                                           out_min=0, out_max=255),
-                Resized(keys=["image", "label", "connected_component_label"], 
-                        spatial_size=target_size, mode=["area", "nearest", "nearest"]),
             ]
         )
         
