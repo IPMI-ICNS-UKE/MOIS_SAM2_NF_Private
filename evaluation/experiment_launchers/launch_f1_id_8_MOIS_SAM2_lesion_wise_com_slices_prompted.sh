@@ -17,7 +17,7 @@ NUM_LESIONS=20
 NUMBER_OF_EXEMPLARS=8
 USE_ONLY_PROMPTED_EXEMPLARS=true
 FILTER_EXEMPLAR_PREDICTION=false
-MIN_LESION_AREA=10
+MIN_LESION_AREA=40
 USE_LOW_RES_MASK=false
 
 RESULTS_DIR="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/evaluation/results/id_8"
