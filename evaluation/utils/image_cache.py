@@ -33,7 +33,7 @@ class ImageCache:
             else os.path.join(pathlib.Path.home(), ".cache", "monailabel", "sam2")
         )
         self.cached_dirs = {}
-        self.cache_expiry_sec = 10 * 60
+        self.cache_expiry_sec = 20 * 60
 
         remove_file(self.cache_path)
         os.makedirs(self.cache_path, exist_ok=True)
