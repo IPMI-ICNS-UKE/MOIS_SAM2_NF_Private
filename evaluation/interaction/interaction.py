@@ -262,9 +262,21 @@ class Interaction:
             
             # If MOIS SAM2 is used in the local mode, we should use exemplar propagation
             # after finishing lesion-level interactions and agregation of exemplars.
-            # After this step the exemplar-bank should be reset.
-            if ((self.args.evaluation_mode == "lesion_wise_non_corrective") or 
-                (self.args.evaluation_mode == "lesion_wise_corrective")) and self.args.network_type == "MOIS_SAM2":
+            # After this step the exemplar-bank should be reset. 
+            
+            # Assemble a logical statement
+            is_mois_sam2 = self.args.network_type == "MOIS_SAM2"
+            is_lesion_eval_mode = self.args.evaluation_mode in [
+                "lesion_wise_non_corrective",
+                "lesion_wise_corrective"
+                ]
+            allow_propagation = (
+                not self.args.no_prop_beyond_lesions
+                or (self.args.no_prop_beyond_lesions and not max_number_lesions_achieved)
+                )
+            
+                       
+            if (is_mois_sam2 and is_lesion_eval_mode and allow_propagation):
                 logger.info(f">>> Running MOIS SAM2 exemplar-based inference after annotating the last lesion instance...")
                 # Build input dictionary for the inferer
                 inputs = {

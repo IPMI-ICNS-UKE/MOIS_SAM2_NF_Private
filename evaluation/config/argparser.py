@@ -54,6 +54,7 @@ def parse_args():
     parser.add_argument('--filter_prev_prediction_components', type=lambda x: bool(strtobool(x)), default=True, help="Filter exemplar-based prediction according to the prompt-based results.")
     parser.add_argument('--use_low_res_masks_for_com_detection', type=lambda x: bool(strtobool(x)), default=True, help="Use low-resulution semantic mask for detecting centers of mass of lesions.")
     parser.add_argument('--min_lesion_area_threshold', type=int, default=40, help="Minimal area of potential of lesion predicted with exemplars")
+    parser.add_argument('--no_prop_beyond_lesions', type=lambda x: bool(strtobool(x)), default=True, help="Do not perform exemplar-based propagation if all lesions were processed with interactions.")
 
     args = parser.parse_args()
     
