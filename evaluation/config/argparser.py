@@ -18,7 +18,7 @@ def parse_args():
     # General arguments
     parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SimpleClick', 'SAM2', 'MOIS_SAM2'], required=True, help="Type of network to evaluate")
     parser.add_argument('--fold', type=int, choices=[1, 2, 3], required=True, help="Cross-validation fold")
-    parser.add_argument('--test_set_id', type=int, choices=[1, 2, 3], required=True, help="Evaluation data subset")
+    parser.add_argument('--test_set_id', type=int, choices=[1, 2, 3, 4], required=True, help="Evaluation data subset")
     parser.add_argument('--evaluation_mode', type=str, choices=['lesion_wise_non_corrective', 'lesion_wise_corrective', 'global_corrective'], required=True, help="Evaluation mode")
     
     # Path arguments
