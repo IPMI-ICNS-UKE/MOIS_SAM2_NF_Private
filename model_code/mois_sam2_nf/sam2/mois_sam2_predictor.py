@@ -535,6 +535,8 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
                                 frame_idx,
                                 binarization_threshold=0.5,
                                 min_area_threshold=1, # ToDo: Need to experiment with that
+                                use_automatic_segmentation=None,
+                                switch_off_object_score_check=False
                                 ):
         """
         Entry point for finding and segmenting objects 
@@ -554,6 +556,8 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
             inference_state=inference_state,
             frame_idx=frame_idx,
             batch_size=1,  # run on the slice of a single object
+            use_automatic_segmentation=use_automatic_segmentation,
+            switch_off_object_score_check=switch_off_object_score_check
             )
         
         # Step 2. Convert the predicted mask to binary
@@ -588,7 +592,9 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
     def _segment_exemplars_in_slice(self,
                                     inference_state,
                                     frame_idx,
-                                    batch_size                                  
+                                    batch_size,
+                                    use_automatic_segmentation=None,
+                                    switch_off_object_score_check=False                                  
                                     ):
         """
         Generate a semantic segmentation mask for all objects in a given frame 
@@ -636,7 +642,9 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
                                                     frame_idx,
                                                     current_vision_feats,
                                                     current_vision_pos_embeds,
-                                                    feat_sizes
+                                                    feat_sizes,
+                                                    use_automatic_segmentation,
+                                                    switch_off_object_score_check
                                                     )
         
         # Step 4. Retrieve and post-process outputs
@@ -737,6 +745,8 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
         min_area_threshold=1,
         max_frame_num_to_track=None,
         bidirectional=False,
+        use_automatic_segmentation=None,
+        switch_off_object_score_check=False
         ):
         
         # Step 1: Find similar objects in the specified slice
@@ -747,7 +757,9 @@ class MOISSAM2Predictor(MOISSAM2Base, SAM2VideoPredictor):
              inference_state, 
              frame_idx, 
              binarization_threshold=binarization_threshold,
-             min_area_threshold=min_area_threshold)
+             min_area_threshold=min_area_threshold,
+             use_automatic_segmentation=use_automatic_segmentation,
+             switch_off_object_score_check=switch_off_object_score_check)
                   
         # Step 2: Interact with each found object using its center of mass as a positive point
         for obj_idx, obj_data in filtered_objects_dict.items():

@@ -24,9 +24,13 @@
 
 import torch
 import torch.distributed
+import torch.nn.functional as F
 from torch.nn.init import trunc_normal_
 from sam2.modeling.sam2_utils import get_1d_sine_pe, MLP
 from sam2.modeling.sam2_base import SAM2Base
+
+# a large negative value as a placeholder score for missing objects
+NO_OBJ_SCORE = -1024.0
 
 
 class MOISSAM2Base(SAM2Base):
@@ -46,6 +50,8 @@ class MOISSAM2Base(SAM2Base):
         memory_attention,
         memory_encoder,
         exemplar_attention, # New component for exemplar attention
+        use_dedicated_exemplar_attention,
+        use_automatic_segmentation_prob,
         num_max_exemplars=10,
         use_exemplar_obj_ptrs_in_encoder=False,
         max_exemplar_obj_ptrs_in_encoder=16,
@@ -55,6 +61,8 @@ class MOISSAM2Base(SAM2Base):
         proj_tpos_enc_in_exemplar_obj_ptrs=False,
         directly_add_no_exemplar_embed=False,
         exemplar_use_only_prompted=False,
+        no_exemplar_embed_dim = 64,
+        switch_off_object_score_check_flag=False,
         **kwargs
     ):
         """
@@ -78,17 +86,23 @@ class MOISSAM2Base(SAM2Base):
         )
         # Initialize exemplar components
         self.exemplar_attention = exemplar_attention
-        # Maximum number of exemplars
+        self.use_dedicated_exemplar_attention = use_dedicated_exemplar_attention
         self.num_max_exemplars = num_max_exemplars 
         self.exemplar_use_only_prompted = exemplar_use_only_prompted
+        self.use_automatic_segmentation_prob = use_automatic_segmentation_prob
+        self.switch_off_object_score_check_flag = switch_off_object_score_check_flag
         
         # 2 stands for two types of exemplars - conditioning and non-conditioning
         self.exemplar_type_enc = torch.nn.Parameter(
             torch.zeros(2, 1, 1, self.mem_dim)
         )
         trunc_normal_(self.exemplar_type_enc, std=0.02)
-        self.no_exemplar_embed = torch.nn.Parameter(torch.zeros(1, 1, self.hidden_dim))
-        self.no_exemplar_pos_enc = torch.nn.Parameter(torch.zeros(1, 1, self.hidden_dim))
+        if directly_add_no_exemplar_embed:
+            self.no_exemplar_embed = torch.nn.Parameter(torch.zeros(1, 1, self.hidden_dim))
+            self.no_exemplar_pos_enc = torch.nn.Parameter(torch.zeros(1, 1, self.hidden_dim))
+        else:
+            self.no_exemplar_embed = torch.nn.Parameter(torch.zeros(4096, 1, no_exemplar_embed_dim))
+            self.no_exemplar_pos_enc = torch.nn.Parameter(torch.zeros(4096, 1, no_exemplar_embed_dim))
         trunc_normal_(self.no_exemplar_embed, std=0.02)
         trunc_normal_(self.no_exemplar_pos_enc, std=0.02)
             
@@ -129,6 +143,7 @@ class MOISSAM2Base(SAM2Base):
         current_vision_pos_embeds,
         feat_sizes,
         exemplars_dict,
+        use_automatic_segmentation=None,
     ):
         """
         Fuse the current frame's visual feature map with available exemplars.
@@ -160,9 +175,9 @@ class MOISSAM2Base(SAM2Base):
             return pix_feat
         
         num_obj_ptr_tokens = 0 # Number of object pointer tokens
-        
-        # If we already have exemplars
-        if exemplars_dict:            
+                
+        # If we already have exemplars and do not want to use automatic inference
+        if exemplars_dict and (not use_automatic_segmentation):      
             to_cat_exemplars_features = []
             to_cat_exemplars_pos_embed = []
             exemplar_pos_and_ptrs = []
@@ -203,63 +218,75 @@ class MOISSAM2Base(SAM2Base):
                 exemplar_pos_and_ptrs.append((ex_pos, ex_obj_ptr))
             
             # Form object pointers
-            if len(exemplar_pos_and_ptrs) > 0:
-                pos_list, ptrs_list = zip(*exemplar_pos_and_ptrs)
-                
-                # Stack object pointers along dim=0 into [ptr_seq_len, B, C] shape
-                obj_ptrs = torch.stack(ptrs_list, dim=0)
-                
-                # Add temporal positional embedding based on how far an exemplar is
-                if self.add_tpos_enc_to_exemplar_obj_ptrs:
+            if self.use_exemplar_obj_ptrs_in_encoder:
+                if len(exemplar_pos_and_ptrs) > 0:
+                    pos_list, ptrs_list = zip(*exemplar_pos_and_ptrs)
                     
-                    t_diff_max = max(1, max(pos_list) - min(pos_list))
-                    tpos_dim = tpos_dim = C if self.proj_tpos_enc_in_exemplar_obj_ptrs else self.mem_dim
-                    obj_pos = torch.tensor(pos_list).to(
-                                device=device, non_blocking=True
-                            )
-                    obj_pos = get_1d_sine_pe(obj_pos / t_diff_max, dim=tpos_dim)
-                    obj_pos = self.exemplar_obj_ptr_tpos_proj(obj_pos)
-                    obj_pos = obj_pos.unsqueeze(1).expand(-1, B, self.mem_dim)
+                    # Stack object pointers along dim=0 into [ptr_seq_len, B, C] shape
+                    obj_ptrs = torch.stack(ptrs_list, dim=0)
+                    
+                    # Add temporal positional embedding based on how far an exemplar is
+                    if self.add_tpos_enc_to_exemplar_obj_ptrs:
+                        
+                        t_diff_max = max(1, max(pos_list) - min(pos_list))
+                        tpos_dim = tpos_dim = C if self.proj_tpos_enc_in_exemplar_obj_ptrs else self.mem_dim
+                        obj_pos = torch.tensor(pos_list).to(
+                                    device=device, non_blocking=True
+                                )
+                        obj_pos = get_1d_sine_pe(obj_pos / t_diff_max, dim=tpos_dim)
+                        obj_pos = self.exemplar_obj_ptr_tpos_proj(obj_pos)
+                        obj_pos = obj_pos.unsqueeze(1).expand(-1, B, self.mem_dim)
+                    else:
+                        obj_pos = obj_ptrs.new_zeros(len(pos_list), B, self.mem_dim)
+                    
+                    if self.mem_dim < C:
+                        # split a pointer into (C // self.mem_dim) tokens for self.mem_dim < C
+                        obj_ptrs = obj_ptrs.reshape(
+                            -1, B, C // self.mem_dim, self.mem_dim
+                        )
+                        obj_ptrs = obj_ptrs.permute(0, 2, 1, 3).flatten(0, 1)
+                        obj_pos = obj_pos.repeat_interleave(C // self.mem_dim, dim=0)
+                    
+                    to_cat_exemplars_features.append(obj_ptrs)
+                    to_cat_exemplars_pos_embed.append(obj_pos)
+                    num_obj_ptr_tokens = obj_ptrs.shape[0]
                 else:
-                    obj_pos = obj_ptrs.new_zeros(len(pos_list), B, self.mem_dim)
-                
-                if self.mem_dim < C:
-                    # split a pointer into (C // self.mem_dim) tokens for self.mem_dim < C
-                    obj_ptrs = obj_ptrs.reshape(
-                        -1, B, C // self.mem_dim, self.mem_dim
-                    )
-                    obj_ptrs = obj_ptrs.permute(0, 2, 1, 3).flatten(0, 1)
-                    obj_pos = obj_pos.repeat_interleave(C // self.mem_dim, dim=0)
-                
-                to_cat_exemplars_features.append(obj_ptrs)
-                to_cat_exemplars_pos_embed.append(obj_pos)
-                num_obj_ptr_tokens = obj_ptrs.shape[0]
-            else:
-                num_obj_ptr_tokens = 0
+                    num_obj_ptr_tokens = 0
         
-        else: # No exemplars yet
+        else: # No exemplars yet or fully automatic inference mode            
             if self.directly_add_no_exemplar_embed:
                 # directly add no-exemplar embedding (instead of using the transformer encoder)
-                pix_feat_with_exemplar = current_vision_feats[-1] + self.no_exemplar_embed
+                pix_feat_with_exemplar = current_vision_feats[-1] + self.no_exemplar_embed # (1, 1, 256)
                 pix_feat_with_exemplar = pix_feat_with_exemplar.permute(1, 2, 0).view(B, C, H, W)
+                # torch.Size([1, 256, 64, 64])
                 return pix_feat_with_exemplar
-            
-            # Use a dummy token on the first frame (to avoid empty memory input to tranformer encoder)
-            to_cat_exemplars_features = [self.no_exemplar_embed.expand(1, B, self.mem_dim)]
-            to_cat_exemplars_pos_embed = [self.no_exemplar_pos_enc.expand(1, B, self.mem_dim)]
+            # Use a dummy token on the first frame (to avoid empty memory input to tranformer encoder)            
+            # self.no_exemplar_embed: torch.Size([1, 1, 256])            
+            to_cat_exemplars_features = [self.no_exemplar_embed]
+            to_cat_exemplars_pos_embed = [self.no_exemplar_pos_enc]
         
         # Step 2: Concatenate the exemplars and forward through the transformer encoder
         memory = torch.cat(to_cat_exemplars_features, dim=0)
+        # List of torch.Size([4096, 1, 64])
         memory_pos_embed = torch.cat(to_cat_exemplars_pos_embed, dim=0)
         
         # Process feature map with exemplar attention mechanism
-        pix_feat_with_exemplar = self.exemplar_attention(
-            curr=current_vision_feats,
-            curr_pos=current_vision_pos_embeds,
-            exemplars=memory,
-            exemplar_pos=memory_pos_embed,
-            num_obj_ptr_tokens=num_obj_ptr_tokens,
-        )
+        if self.use_dedicated_exemplar_attention: 
+            pix_feat_with_exemplar = self.exemplar_attention(
+                curr=current_vision_feats,
+                curr_pos=current_vision_pos_embeds,
+                exemplars=memory,
+                exemplar_pos=memory_pos_embed,
+                num_obj_ptr_tokens=num_obj_ptr_tokens,
+            )
+        else: # Use memory attention for both: memory- and exemplar-based segmentation
+            pix_feat_with_exemplar = self.memory_attention(
+                curr=current_vision_feats,
+                curr_pos=current_vision_pos_embeds,
+                memory=memory,
+                memory_pos=memory_pos_embed,
+                num_obj_ptr_tokens=num_obj_ptr_tokens,
+            )
         # reshape the output (HW)BC => BCHW
         pix_feat_with_exemplar = pix_feat_with_exemplar.permute(1, 2, 0).view(B, C, H, W)
         return pix_feat_with_exemplar
@@ -271,6 +298,8 @@ class MOISSAM2Base(SAM2Base):
         current_vision_feats,
         current_vision_pos_embeds,
         feat_sizes,
+        use_automatic_segmentation=None,
+        switch_off_object_score_check=False
     ):
         """
         Tracks and propagates exemplars stored in `exemplars_dict` to segment all same-class objects 
@@ -309,6 +338,8 @@ class MOISSAM2Base(SAM2Base):
             current_vision_feats,
             current_vision_pos_embeds,
             feat_sizes,
+            use_automatic_segmentation=use_automatic_segmentation,
+            switch_off_object_score_check=switch_off_object_score_check
         )
         
         (
@@ -335,6 +366,129 @@ class MOISSAM2Base(SAM2Base):
         
         return current_out
     
+    def _forward_sam_heads(
+        self,
+        backbone_features,
+        point_inputs=None,
+        mask_inputs=None,
+        high_res_features=None,
+        multimask_output=False,
+        switch_off_object_score_check=False
+    ):
+        """
+        Updated version
+        """
+        B = backbone_features.size(0)
+        device = backbone_features.device
+        assert backbone_features.size(1) == self.sam_prompt_embed_dim
+        assert backbone_features.size(2) == self.sam_image_embedding_size
+        assert backbone_features.size(3) == self.sam_image_embedding_size
+
+        # a) Handle point prompts
+        if point_inputs is not None:
+            sam_point_coords = point_inputs["point_coords"]
+            sam_point_labels = point_inputs["point_labels"]
+            assert sam_point_coords.size(0) == B and sam_point_labels.size(0) == B
+        else:
+            # If no points are provide, pad with an empty point (with label -1)
+            sam_point_coords = torch.zeros(B, 1, 2, device=device)
+            sam_point_labels = -torch.ones(B, 1, dtype=torch.int32, device=device)
+
+        # b) Handle mask prompts
+        if mask_inputs is not None:
+            # If mask_inputs is provided, downsize it into low-res mask input if needed
+            # and feed it as a dense mask prompt into the SAM mask encoder
+            assert len(mask_inputs.shape) == 4 and mask_inputs.shape[:2] == (B, 1)
+            if mask_inputs.shape[-2:] != self.sam_prompt_encoder.mask_input_size:
+                sam_mask_prompt = F.interpolate(
+                    mask_inputs.float(),
+                    size=self.sam_prompt_encoder.mask_input_size,
+                    align_corners=False,
+                    mode="bilinear",
+                    antialias=True,  # use antialias for downsampling
+                )
+            else:
+                sam_mask_prompt = mask_inputs
+        else:
+            # Otherwise, simply feed None (and SAM's prompt encoder will add
+            # a learned `no_mask_embed` to indicate no mask input in this case).
+            sam_mask_prompt = None
+
+        sparse_embeddings, dense_embeddings = self.sam_prompt_encoder(
+            points=(sam_point_coords, sam_point_labels),
+            boxes=None,
+            masks=sam_mask_prompt,
+        )
+        (
+            low_res_multimasks,
+            ious,
+            sam_output_tokens,
+            object_score_logits,
+        ) = self.sam_mask_decoder(
+            image_embeddings=backbone_features,
+            image_pe=self.sam_prompt_encoder.get_dense_pe(),
+            sparse_prompt_embeddings=sparse_embeddings,
+            dense_prompt_embeddings=dense_embeddings,
+            multimask_output=multimask_output,
+            repeat_image=False,  # the image is already batched
+            high_res_features=high_res_features,
+        )
+                
+        if self.pred_obj_scores and (not switch_off_object_score_check):
+            is_obj_appearing = object_score_logits > 0
+
+            # Mask used for spatial memories is always a *hard* choice between obj and no obj,
+            # consistent with the actual mask prediction
+            low_res_multimasks = torch.where(
+                is_obj_appearing[:, None, None],
+                low_res_multimasks,
+                NO_OBJ_SCORE,
+            )
+        # convert masks from possibly bfloat16 (or float16) to float32
+        # (older PyTorch versions before 2.1 don't support `interpolate` on bf16)
+        low_res_multimasks = low_res_multimasks.float()
+        high_res_multimasks = F.interpolate(
+            low_res_multimasks,
+            size=(self.image_size, self.image_size),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+        sam_output_token = sam_output_tokens[:, 0]
+        if multimask_output:
+            # take the best mask prediction (with the highest IoU estimation)
+            best_iou_inds = torch.argmax(ious, dim=-1)
+            batch_inds = torch.arange(B, device=device)
+            low_res_masks = low_res_multimasks[batch_inds, best_iou_inds].unsqueeze(1)
+            high_res_masks = high_res_multimasks[batch_inds, best_iou_inds].unsqueeze(1)
+            if sam_output_tokens.size(1) > 1:
+                sam_output_token = sam_output_tokens[batch_inds, best_iou_inds]
+        else:
+            low_res_masks, high_res_masks = low_res_multimasks, high_res_multimasks
+
+        # Extract object pointer from the SAM output token (with occlusion handling)
+        obj_ptr = self.obj_ptr_proj(sam_output_token)
+        if self.pred_obj_scores and (not switch_off_object_score_check):
+            # Allow *soft* no obj ptr, unlike for masks
+            if self.soft_no_obj_ptr:
+                lambda_is_obj_appearing = object_score_logits.sigmoid()
+            else:
+                lambda_is_obj_appearing = is_obj_appearing.float()
+
+            if self.fixed_no_obj_ptr:
+                obj_ptr = lambda_is_obj_appearing * obj_ptr
+            obj_ptr = obj_ptr + (1 - lambda_is_obj_appearing) * self.no_obj_ptr
+
+        return (
+            low_res_multimasks,
+            high_res_multimasks,
+            ious,
+            low_res_masks,
+            high_res_masks,
+            obj_ptr,
+            object_score_logits,
+        )
+    
     def _track_exemplars(
         self,
         exemplars_dict,
@@ -342,6 +496,8 @@ class MOISSAM2Base(SAM2Base):
         current_vision_feats,
         current_vision_pos_embeds,
         feat_sizes,
+        use_automatic_segmentation=None,
+        switch_off_object_score_check=False
     ):
         """
         Tracks and segments all same-looking objects in the current frame using previously stored exemplars.
@@ -367,6 +523,20 @@ class MOISSAM2Base(SAM2Base):
                 - `high_res_features` (list or None): High-resolution feature maps for refining segmentation.
                 - `pix_feat` (tensor): Processed feature map conditioned on exemplars.
         """
+        # Check whether we use automatic inference
+        if use_automatic_segmentation is None:
+            if self.use_automatic_segmentation_prob == 1.0:
+                use_automatic_segmentation = True
+            elif self.use_automatic_segmentation_prob == 0.0:
+                use_automatic_segmentation = False
+            else:
+                # Determine automatic inference mode
+                use_automatic_segmentation = torch.rand(1).item() < self.use_automatic_segmentation_prob
+        
+        # Define whether we need to filter the output
+        if self.switch_off_object_score_check_flag or use_automatic_segmentation:
+            switch_off_object_score_check = True
+        
         # Initialize output dictionary with placeholders for interactive segmentation inputs
         current_out = {"point_inputs": None, "mask_inputs": None}
         
@@ -385,7 +555,8 @@ class MOISSAM2Base(SAM2Base):
             current_vision_feats=current_vision_feats[-1:],
             current_vision_pos_embeds=current_vision_pos_embeds[-1:],
             feat_sizes=feat_sizes[-1:],
-            exemplars_dict=exemplars_dict
+            exemplars_dict=exemplars_dict,
+            use_automatic_segmentation=use_automatic_segmentation
         )
         
         # Forward SAM heads - update object tracking
@@ -395,6 +566,7 @@ class MOISSAM2Base(SAM2Base):
                 mask_inputs=None, # No explicit mask-based interactions
                 high_res_features=high_res_features,
                 multimask_output=False, # Single-mask output mode
+                switch_off_object_score_check=switch_off_object_score_check
             )
         
         return current_out, sam_outputs, high_res_features, pix_feat
