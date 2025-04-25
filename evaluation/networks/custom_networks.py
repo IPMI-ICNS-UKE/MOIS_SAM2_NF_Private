@@ -8,10 +8,10 @@ import onnxruntime as ort
 import numpy as np
 import torch
 import torch.nn as nn
+from scipy.ndimage import label
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
 from monai.inferers import SlidingWindowInferer
-from monai.metrics import compute_dice # Needed for debugging of SimpleClick
 
 from evaluation.utils.image_cache import ImageCache
 # Importing SAM2 dependencies
@@ -19,9 +19,6 @@ from hydra import initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from sam2.build_sam import build_sam2_video_predictor
 from sam2.build_mois_sam import build_mois_sam2_predictor
-
-from scipy.ndimage import label
-
 
 logger = logging.getLogger("evaluation_pipeline_logger")
 

@@ -38,7 +38,6 @@ This repository evaluates and benchmarks the following interactive segmentation 
 
 - **[DINs (Deep Interactive Networks)](https://github.com/Jarvis73/DINs/tree/main)** - CNN-based model incorporating user feedback.
 - **[SW-FastEdit (Sliding Window FastEdit)](https://github.com/Zrrr1997/SW-FastEdit)** - CNN-based model leveraging a sliding window strategy.
-- **[SimpleClick](https://github.com/uncbiag/SimpleClick/tree/v1.0) + [STCN](https://github.com/uncbiag/iSegFormer/tree/v2.0/maskprop/Med-STCN) (STILL UNDER DEVELOPMENT)** - Transformer-based interactive segmentation model operating in 2D + segmentation propagation model.
 - **[SAM2 (Segment Anything Model 2)](https://github.com/facebookresearch/sam2/tree/main)** - Transformer-based model extending 2D segmentation into videos. We applied its frame-wise processing to slices of 3D whole-body MRI along the anterior-posterior axis.
 
 The figure below presents examples of neurofibroma segmentation predicted by different fine-tuned models in the **lesion-wise interaction scenario** (3 interactions per 20 largest lesions) on two cases:
@@ -90,14 +89,10 @@ cd NFInteractiveSegmentationBenchmarking
 ├── launchers
 │   ├── finetune_dins.sh
 │   ├── finetune_sam2.sh
-│   ├── finetune_simpleclick.sh
-│   ├── finetune_stcn.sh
 │   ├── finetune_sw_fastedit.sh
 │   └── ...
 ├── model_code
 │   ├── DINs_Neurofibroma
-│   ├── iSegFormer_Neurofibroma
-│   ├── SimpleClick_Neurofibroma
 │   ├── sam2_Neurofibroma
 │   └── SW_FastEdit_Neurofibroma
 ├── model_weights
@@ -118,7 +113,7 @@ cd NFInteractiveSegmentationBenchmarking
 
 ### Environment Setup
 There are two environments:
-1. **PyTorch-based** (for evaluation pipeline and training of most models, including SAM2, SimpleClick, and SW-FastEdit)
+1. **PyTorch-based** (for evaluation pipeline and training of most models, including SAM2, and SW-FastEdit)
 2. **TensorFlow-based** (for training and model weights exporting of DINs)
 
 #### PyTorch Environment
@@ -177,9 +172,6 @@ Download links:
 
 - **DINs**: [DINs Repository](https://github.com/Jarvis73/DINs/tree/main?tab=readme-ov-file#32-testing)
 - **SW-FastEdit**: [SW-FastEdit Repository](https://github.com/Zrrr1997/SW-FastEdit?tab=readme-ov-file#evaluation-on-autopet-ii)
-- **SimpleClick + STCN**:
-  - [SimpleClick](https://github.com/uncbiag/SimpleClick/tree/v1.0?tab=readme-ov-file#download)
-  - [STCN](https://github.com/uncbiag/iSegFormer/tree/v1.0?tab=readme-ov-file#evaluation)
 - **SAM2 (SAM2.1 Hiera Base Plus)**: [SAM2 Repository](https://github.com/facebookresearch/sam2/tree/main?tab=readme-ov-file#getting-started)
 
 ### Model Training & Fine-Tuning
@@ -247,8 +239,6 @@ jupyter notebook result_analysis.ipynb
 We would like to thank all the authors of the following repositories and respective research papers that were instrumental in our work:
 - [DINs: Deep Interactive Networks for Neurofibroma Segmentation in Neurofibromatosis Type 1 on Whole-Body MRI](https://github.com/Jarvis73/DINs/tree/main); Zhang et al. (2022), [IEEE Journal of Biomedical and Health Informatics](https://doi.org/10.1109/JBHI.2021.3087735)
 - [Sliding Window Fastedit: A Framework for Lesion Annotation in Whole-Body Pet Images](https://github.com/Zrrr1997/SW-FastEdit); Hadlich et al. (2024), [IEEE ISBI](https://doi.org/10.1109/ISBI56570.2024.10635459)
-- [SimpleClick: Interactive Image Segmentation with Simple Vision Transformers](https://github.com/uncbiag/SimpleClick/tree/v1.0); Liu et al. (2023), [ICCV](https://doi.org/10.1109/ICCV.2023.22290)
-- [Exploring Cycle Consistency Learning in Interactive Volume Segmentation](https://github.com/uncbiag/iSegFormer/tree/v2.0); Liu et al. (2023), [arXiv preprint](https://arxiv.org/abs/2303.06493)
 - [SAM 2: Segment Anything in Images and Videos](https://github.com/facebookresearch/sam2/tree/main); Ravi et al. (2024), [arXiv preprint](https://arxiv.org/abs/2408.00714)
 
 ---

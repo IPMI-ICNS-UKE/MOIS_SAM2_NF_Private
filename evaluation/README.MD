@@ -33,7 +33,6 @@ The following interactive segmentation models are supported:
 - **DINs** (Deep Interactive Networks)
 - **SW-FastEdit** (Sliding Window FastEdit)
 - **SAM2** (Segment Anything Model v2)
-- **SimpleClick** (Still under debugging)
 
 # Running Evaluations
 

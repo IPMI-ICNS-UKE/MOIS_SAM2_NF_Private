@@ -1,7 +1,0 @@
-# Configuration file adapted for fine-tuning of SimpleClick on Neurofibroma Dataset
-MODEL_NAME: 'neurofibroma_vit_base1024'
-MAE_BASE: "/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/model_weights/SimpleClick_STCN_pretrained/ViT_pretrained/mae_pretrain_vit_base.pth"
-DATASET_PATH: "/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/data/processed"
-FOLD_PATH: "/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/data/splits"
-INTERACTIVE_MODELS_PATH: "./weights"
-EXPS_PATH: "/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/experiments/SimpleClick"

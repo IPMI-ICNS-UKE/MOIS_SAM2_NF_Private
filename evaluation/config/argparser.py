@@ -16,7 +16,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluation Pipeline for Interactive Segmentation")
     
     # General arguments
-    parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SimpleClick', 'SAM2', 'MOIS_SAM2'], required=True, help="Type of network to evaluate")
+    parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SAM2', 'MOIS_SAM2'], required=True, help="Type of network to evaluate")
     parser.add_argument('--fold', type=int, choices=[1, 2, 3], required=True, help="Cross-validation fold")
     parser.add_argument('--test_set_id', type=int, choices=[1, 2, 3, 4], required=True, help="Evaluation data subset")
     parser.add_argument('--evaluation_mode', type=str, choices=['lesion_wise_non_corrective', 'lesion_wise_corrective', 'global_corrective'], required=True, help="Evaluation mode")
@@ -91,11 +91,6 @@ def parse_args():
         args.sw_batch_size = 4
         args.no_disks = True
         args.sigma=(5.0, 5.0, 1.0)
-    elif args.network_type == "SimpleClick":
-        args.checkpoint_name = "checkpoint_simpleclick.pth"
-        args.checkpoint_propagator = "checkpoint_stcn.pth"
-        args.non_standard_network = True
-        args.patch_size_discrepancy = (512, 512, 16)
     elif args.network_type == "SAM2":
         args.checkpoint_name = "checkpoint.pt"
         args.config_name = "sam2.1_hiera_b+.yaml"

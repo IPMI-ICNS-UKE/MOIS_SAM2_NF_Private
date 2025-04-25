@@ -16,9 +16,8 @@ def get_network(args, device):
         args (Any): Parsed command-line arguments containing network configuration details.
             - `model_dir` (str): Directory where the model checkpoint is stored.
             - `checkpoint_name` (str): Name of the model checkpoint file.
-            - `network_type` (str): Type of network to load (`SW-FastEdit`, `DINs`, `SimpleClick`, or `SAM2`).
+            - `network_type` (str): Type of network to load (`SW-FastEdit`, `DINs`, or `SAM2`).
             - `labels` (list): List of label classes for segmentation.
-            - `checkpoint_propagator` (str, optional): Additional checkpoint file for SimpleClick.
             - `config_name` (str, optional): Configuration file name for SAM2.
             - `cache_dir` (str, optional): Directory for caching in SAM2.
         device (torch.device): The computation device (`cuda` or `cpu`).

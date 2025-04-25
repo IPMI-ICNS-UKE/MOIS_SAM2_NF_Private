@@ -210,7 +210,6 @@ class Interaction:
                         "call_exemplar_post_inference": False,
                         "evaluation_mode": self.args.evaluation_mode, # For MOIS SAM2
                         "previous_global_prediction": prediction_global, # For MOIS SAM2
-                        "gt": batchdata["connected_component_label_local"].to(device) # For SimpleClick debugging
                     }
                     
                     # Perform inference and get the local prediction
@@ -290,7 +289,6 @@ class Interaction:
                     "call_exemplar_post_inference": True, # For MOIS SAM2
                     "evaluation_mode": self.args.evaluation_mode, # For MOIS SAM2
                     "previous_global_prediction": prediction_global, # For MOIS SAM2
-                    "gt": batchdata["connected_component_label_local"].to(device) # For SimpleClick debugging
                 }
                 
                 # Perform inference and get the local prediction

@@ -1,6 +1,6 @@
 # README for `model_weights` Directory
 
-This directory should contain pre-trained and fine-tuned model weights for various interactive segmentation models, including **DINs, SAM2, SimpleClick, STCN, and SW-FastEdit**. These models are structured into subdirectories for better organization. Please place downloaded pretrained weights following the directory structure:
+This directory should contain pre-trained and fine-tuned model weights for various interactive segmentation models, including **DINs, SAM2, STCN, and SW-FastEdit**. These models are structured into subdirectories for better organization. Please place downloaded pretrained weights following the directory structure:
 
 ## Directory Structure
 
@@ -17,17 +17,6 @@ This directory should contain pre-trained and fine-tuned model weights for vario
 ├── SAM2_pretrained/             # Pre-trained SAM2 model weights
 │   ├── sam2.1_hiera_base_plus.pt
 │   ├── sam2.1_hiera_b+.yaml
-├── SimpleClick_STCN_pretrained/ # Pre-trained SimpleClick & STCN models
-│   ├── SimpleClick_cocolvis/
-│   │   └── cocolvis_vit_base.pth
-│   ├── STCN_abd1k/
-│   │   └── stcn_ft_with_cycle.pth
-│   ├── STCN_backbone/
-│   │   └── stcn.pth
-│   ├── STCN_fusion/
-│   │   └── fusion_stcn.pth
-│   ├── ViT_pretrained/
-│   │   └── mae_pretrain_vit_base.pth
 ├── SW_FastEdit_pretrained/      # Pre-trained SW-FastEdit model
 │   └── 151_best_0.8534.pt
 ```
@@ -39,9 +28,6 @@ This directory should contain pre-trained and fine-tuned model weights for vario
 
 ### **SAM2 (Segment Anything Model 2)**
 - **Pre-trained** (`SAM2_pretrained/`): Contains the original Hiera Base Plus transformer weights used in SAM2.
-
-### **SimpleClick & STCN**
-- **Pre-trained** (`SimpleClick_STCN_pretrained/`): Stores the original pre-trained models for SimpleClick, and STCN.
 
 ### **SW-FastEdit**
 - **Pre-trained** (`SW_FastEdit_pretrained/`): The best pre-trained SW-FastEdit checkpoint.

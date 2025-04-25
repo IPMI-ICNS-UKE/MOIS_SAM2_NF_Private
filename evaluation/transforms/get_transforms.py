@@ -39,9 +39,6 @@ SPACING_FOR_DINS = (1.7, 1.7, 7.8)
 ORIENTATION_FOR_DINS = ("SRA")
 SPACING_FOR_SW_FASTEDIT = (0.625, 0.625, 7.8)
 ORIENTATION_FOR_SW_FASTEDIT = ("RSA")
-SPACING_FOR_SIMPLECLICK = (-1, -1, -1)
-ORIENTATION_FOR_SIMPLECLICK = ("RSA") 
-TARGET_SIZE_FOR_SIMPLECLICK = (1024, 1024, -1)
 SPACING_FOR_SAM2 = (-1, -1, -1)
 ORIENTATION_FOR_SAM2 = ("RSA")
 SPACING_FOR_MOISSAM2 = (-1, -1, -1)
@@ -63,7 +60,7 @@ def get_pre_transforms(args,
         args (Any): Parsed command-line arguments containing the model configuration.
             - `labels` (Dict): Dictionary mapping label names to numerical values.
             - `evaluation_mode` (str): Specifies whether to use a corrective segmentation mode.
-            - `network_type` (str): Type of network being used (`SW-FastEdit`, `DINs`, `SimpleClick`, or `SAM2`).
+            - `network_type` (str): Type of network being used (`SW-FastEdit`, `DINs`, or `SAM2`).
             - `num_lesions` (int): Maximum number of lesion instances to retain.
         device (str, optional): Computation device (`cpu` or `cuda`). Default is "cpu".
         input_keys (Tuple[str, ...], optional): Keys representing different input data types. Default is `("image", "label", "connected_component_label")`.
@@ -114,20 +111,6 @@ def get_pre_transforms(args,
                 Spacingd(keys=['label', 'connected_component_label'], 
                          pixdim=spacing, mode="nearest"),
                 NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
-            ]
-        )
-        
-    elif args.network_type == "SimpleClick":
-        spacing = SPACING_FOR_SIMPLECLICK
-        orientation = ORIENTATION_FOR_SIMPLECLICK
-        target_size = TARGET_SIZE_FOR_SIMPLECLICK
-        transforms.extend(
-            [
-                Orientationd(keys=input_keys, axcodes=orientation),
-                ScaleIntensityRangePercentilesd(keys="image", lower=0.5, upper=99.5, 
-                                                b_min=0.0, b_max=255.0, clip=True),
-                Resized(keys=["image", "label", "connected_component_label"], 
-                        spatial_size=target_size, mode=["area", "nearest", "nearest"]),
             ]
         )
         
@@ -225,8 +208,7 @@ def get_interaction_post_transforms(args, device="cpu"):
             AsDiscreted(keys="pred_local", argmax=True),
             EnsureTyped(keys="pred_local", device=device),
         ]
-    elif ((args.network_type == "SimpleClick") or 
-          (args.network_type == "SAM2") or 
+    elif ((args.network_type == "SAM2") or 
           (args.network_type == "MOIS_SAM2")):
         transforms = [
             EnsureTyped(keys="pred_local", device=device)
