@@ -1,0 +1,134 @@
+amp: true
+train_number: 100
+bundle_root: $'./work_dir_finetune_Neurofibroma_' +  str(@train_number)
+comment: 'finetune on Neurofibroma datasets.'
+label_set: [0,1]
+mapped_label_set: [0,133]
+model: "vista3d_segresnet_d"
+data_file_base_dir: '/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NF_SAM_Sandbox/data'
+data_list_file_path: $'./data/external/Neurofibroma_fold_' + str(@fold) + '.json'
+ckpt_path: $@bundle_root + '/model_fold' + str(@fold)
+drop_label_prob: 0
+drop_point_prob: 1
+finetune: {activate: true, exclude_vars: null, pretrained_ckpt_name: $'models/model.pt'}
+fold: 0
+image_key: image
+input_channels: 1
+iter_num: 5
+label_key: label
+learning_rate: 0.00005
+log_output_file: $@bundle_root + '/model_fold' + str(@fold) + '/finetune_Neurofibroma.log'
+loss: {_target_: DiceCELoss, include_background: false, sigmoid: true, smooth_dr: 1.0e-05, smooth_nr: 0, softmax: false, squared_pred: true,
+  to_onehot_y: false}
+lr_scheduler: {_target_: monai.optimizers.WarmupCosineSchedule, optimizer: $@optimizer,
+  t_total: $@num_epochs+1, warmup_multiplier: 0.1, warmup_steps: 0}
+max_backprompt: null
+max_foreprompt: null
+ignore_labelset: false
+max_point: 3
+max_prompt: null
+num_epochs: 100
+freeze_epoch: 0
+freeze_head: 'point'
+save_last: false
+save_all: false
+num_epochs_per_validation: 10
+num_images_per_batch: 1
+num_patches_per_image: 2
+num_patches_per_iter: 1
+optimizer: {_target_: torch.optim.AdamW, lr: '@learning_rate', weight_decay: 1.0e-05}
+output_classes: 133
+overlap_ratio: 0.25
+patch_size: [256, 256, 64]
+random_seed: 0
+resample_to_spacing: [0.625, 0.625, 7.8]
+skip_iter_prob: 1
+transforms_train:
+  _target_: Compose
+  transforms:
+  - _target_: LoadImaged
+    ensure_channel_first: true
+    image_only: true
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+  - _target_: Orientationd
+    axcodes: RSA
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+  - _target_: Spacingd
+    keys: ["@image_key", "@label_key"]
+    pixdim: '@resample_to_spacing'
+    mode: [bilinear, nearest]
+    align_corners: [true, true]
+    allow_missing_keys: true
+  - _target_: NormalizeIntensityd
+    nonzero: true
+    channel_wise: true
+    keys: '@image_key'  
+  - _target_: EnsureTyped
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+    track_meta: false
+  - _target_: SpatialPadd
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+    mode: [constant, constant]
+    spatial_size: '@patch_size'
+  - _target_: RandCropByLabelClassesd
+    keys:
+      - '@image_key'
+      - '@label_key'
+    label_key: '@label_key'
+    num_classes: 133
+    num_samples: '@num_patches_per_image'
+    spatial_size: '@patch_size'
+    ratios: $tuple(float(i >= 0) for i in range(133))
+    warn: false
+    allow_missing_keys: true
+  - _target_: RandSimulateLowResolutiond
+    keys:
+      - '@image_key'
+    zoom_range:
+      - 0.3
+      - 1
+    prob: 0.2
+    allow_missing_keys: true
+  - _target_: CastToTyped
+    dtype: [$torch.float32, $torch.int32]
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+
+transforms_validate:
+  _target_: Compose
+  transforms:
+  - _target_: LoadImaged
+    ensure_channel_first: true
+    image_only: true
+    keys: ['@image_key', '@label_key']
+  - _target_: CopyItemsd
+    names: 'label_gt'
+    keys: '@label_key'
+  - _target_: Orientationd
+    axcodes: RSA
+    keys: ['@image_key', '@label_key']
+  - _target_: Spacingd
+    keys: ["@image_key", "@label_key"]
+    pixdim: '@resample_to_spacing'
+    mode: [bilinear, nearest]
+    align_corners: [true, true]
+  - _target_: NormalizeIntensityd
+    nonzero: true
+    channel_wise: true
+    keys: '@image_key'
+  - _target_: SpatialPadd
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+    mode: [constant, constant]
+    spatial_size: '@patch_size'
+  - _target_: CastToTyped
+    dtype: [$torch.float32, $torch.uint8]
+    keys: ['@image_key', '@label_key']
+  - _target_: EnsureTyped
+    keys: ['@image_key', '@label_key']
+    track_meta: true
+transforms_infer: $@transforms_validate

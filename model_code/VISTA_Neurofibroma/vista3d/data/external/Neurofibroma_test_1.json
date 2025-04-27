@@ -1,0 +1,164 @@
+{
+    "training": [
+        {
+            "image": "nifti/imagesTs_1/2_2013_P_502_T2.nii.gz",
+            "label": "nifti/labelsTs_1/2_2013_P_502_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/5_2018_P_294_T2.nii.gz",
+            "label": "nifti/labelsTs_1/5_2018_P_294_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/5_2018_P_523_T2.nii.gz",
+            "label": "nifti/labelsTs_1/5_2018_P_523_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2018_P_271_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2018_P_271_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2018_P_469_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2018_P_469_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2019_P_109_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2019_P_109_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2020_P_473_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2020_P_473_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2014_P_82_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2014_P_82_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2018_P_304_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2018_P_304_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2020_P_678_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2020_P_678_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/8_2018_P_197_T2.nii.gz",
+            "label": "nifti/labelsTs_1/8_2018_P_197_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/9_2019_P_377_T2.nii.gz",
+            "label": "nifti/labelsTs_1/9_2019_P_377_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/9_2020_P_604_T2.nii.gz",
+            "label": "nifti/labelsTs_1/9_2020_P_604_T2.nii.gz"
+        }
+    ],
+    "validation": [
+        {
+            "image": "nifti/imagesTs_1/2_2013_P_502_T2.nii.gz",
+            "label": "nifti/labelsTs_1/2_2013_P_502_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/5_2018_P_294_T2.nii.gz",
+            "label": "nifti/labelsTs_1/5_2018_P_294_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/5_2018_P_523_T2.nii.gz",
+            "label": "nifti/labelsTs_1/5_2018_P_523_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2018_P_271_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2018_P_271_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2018_P_469_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2018_P_469_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2019_P_109_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2019_P_109_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2020_P_473_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2020_P_473_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2014_P_82_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2014_P_82_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2018_P_304_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2018_P_304_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2020_P_678_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2020_P_678_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/8_2018_P_197_T2.nii.gz",
+            "label": "nifti/labelsTs_1/8_2018_P_197_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/9_2019_P_377_T2.nii.gz",
+            "label": "nifti/labelsTs_1/9_2019_P_377_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/9_2020_P_604_T2.nii.gz",
+            "label": "nifti/labelsTs_1/9_2020_P_604_T2.nii.gz"
+        }
+    ],
+    "testing": [
+        {
+            "image": "nifti/imagesTs_1/2_2013_P_502_T2.nii.gz",
+            "label": "nifti/labelsTs_1/2_2013_P_502_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/5_2018_P_294_T2.nii.gz",
+            "label": "nifti/labelsTs_1/5_2018_P_294_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/5_2018_P_523_T2.nii.gz",
+            "label": "nifti/labelsTs_1/5_2018_P_523_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2018_P_271_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2018_P_271_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2018_P_469_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2018_P_469_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2019_P_109_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2019_P_109_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/6_2020_P_473_T2.nii.gz",
+            "label": "nifti/labelsTs_1/6_2020_P_473_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2014_P_82_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2014_P_82_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2018_P_304_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2018_P_304_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/7_2020_P_678_T2.nii.gz",
+            "label": "nifti/labelsTs_1/7_2020_P_678_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/8_2018_P_197_T2.nii.gz",
+            "label": "nifti/labelsTs_1/8_2018_P_197_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/9_2019_P_377_T2.nii.gz",
+            "label": "nifti/labelsTs_1/9_2019_P_377_T2.nii.gz"
+        },
+        {
+            "image": "nifti/imagesTs_1/9_2020_P_604_T2.nii.gz",
+            "label": "nifti/labelsTs_1/9_2020_P_604_T2.nii.gz"
+        }
+    ]
+}

@@ -1,0 +1,54 @@
+amp: true
+fold: 0
+test_set: 1
+exps: nf_finetuned
+output_path: "$'./models/' + @exps"
+ckpt: "$@output_path + '/model_fold_' + str(@fold) + '.pt'"
+dataset_name: "Neurofibroma"
+label_set: [0,1]
+max_iter: 10
+overlap: 0.25
+json_name: "$@dataset_name + 'test_' + str(@test_set) + '.json'"
+data_file_base_dir: '/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NF_SAM_Sandbox/data'
+data_list_file_path: $'./data/external/Neurofibroma_fold_' + str(@fold) + '.json'
+log_output_file: "$@output_path + '/validation_auto_' + @dataset_name + '.log'"
+list_key: 'testing'
+input_channels: 1
+image_key: image
+label_key: label
+patch_size: [256, 256, 64]
+resample_to_spacing: [0.625, 0.625, 7.8]
+transforms_infer:
+  _target_: Compose
+  transforms:
+  - _target_: LoadImaged
+    ensure_channel_first: true
+    image_only: true
+    keys: ['@image_key','@label_key']
+  - _target_: CopyItemsd
+    names: 'label_gt'
+    keys: '@label_key'
+  - _target_: Orientationd
+    axcodes: RSA
+    keys: ['@image_key', '@label_key']
+  - _target_: Spacingd
+    keys: ["@image_key", "@label_key"]
+    pixdim: '@resample_to_spacing'
+    mode: [bilinear, nearest]
+    align_corners: [true, true]
+  - _target_: NormalizeIntensityd
+    nonzero: true
+    channel_wise: true
+    keys: '@image_key'
+  - _target_: SpatialPadd
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+    mode: [constant, constant]
+    spatial_size: '@patch_size'
+  - _target_: CastToTyped
+    dtype: [$torch.float32, $torch.uint8]
+    keys: ['@image_key','@label_key']
+  - _target_: EnsureTyped
+    keys: ['@image_key','@label_key']
+    track_meta: true
+model: "vista3d_segresnet_d"
