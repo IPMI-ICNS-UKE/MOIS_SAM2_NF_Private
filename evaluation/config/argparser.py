@@ -16,10 +16,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluation Pipeline for Interactive Segmentation")
     
     # General arguments
-    parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SAM2', 'MOIS_SAM2'], required=True, help="Type of network to evaluate")
+    parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SAM2', 'MOIS_SAM2', 'VISTA'], required=True, help="Type of network to evaluate")
     parser.add_argument('--fold', type=int, choices=[1, 2, 3], required=True, help="Cross-validation fold")
     parser.add_argument('--test_set_id', type=int, choices=[1, 2, 3, 4], required=True, help="Evaluation data subset")
-    parser.add_argument('--evaluation_mode', type=str, choices=['lesion_wise_non_corrective', 'lesion_wise_corrective', 'global_corrective'], required=True, help="Evaluation mode")
+    parser.add_argument('--evaluation_mode', type=str, choices=['lesion_wise_non_corrective', 'lesion_wise_corrective', 'global_corrective', 'global_non_corrective'], required=True, help="Evaluation mode")
     
     # Path arguments
     parser.add_argument('--input_dir',type=str, default="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/data/raw")
@@ -55,6 +55,9 @@ def parse_args():
     parser.add_argument('--use_low_res_masks_for_com_detection', type=lambda x: bool(strtobool(x)), default=True, help="Use low-resulution semantic mask for detecting centers of mass of lesions.")
     parser.add_argument('--min_lesion_area_threshold', type=int, default=40, help="Minimal area of potential of lesion predicted with exemplars")
     parser.add_argument('--no_prop_beyond_lesions', type=lambda x: bool(strtobool(x)), default=True, help="Do not perform exemplar-based propagation if all lesions were processed with interactions.")
+    
+    # VISTA-specific arguments
+    parser.add_argument('--use_automatic_vista_inference', type=lambda x: bool(strtobool(x)), default=False, help="Use fully automatic VISTA inference without interactions.")
 
     args = parser.parse_args()
     
@@ -70,7 +73,7 @@ def parse_args():
         args.dsc_local_max = 1.0
         args.dsc_global_max = 1.0
 
-    elif args.evaluation_mode == 'global_corrective':
+    elif args.evaluation_mode in ['global_corrective', 'global_non_corrective']:
         args.num_lesions = 1
         args.num_interactions_total_max = args.num_interactions_per_lesion
         args.dsc_local_max = 0.8
@@ -100,7 +103,27 @@ def parse_args():
         args.checkpoint_name = "checkpoint.pt"
         args.config_name = "mois_sam2.1_hiera_b+.yaml"
         args.non_standard_network = True
-        args.patch_size_discrepancy = (512, 512, 16)     
+        args.patch_size_discrepancy = (512, 512, 16)
+    if args.network_type == "VISTA":
+        # Check whether automatic inference is used
+        if args.use_automatic_vista_inference:
+            # Overwrite the evaluation mode
+            args.num_lesions = 1
+            args.num_interactions_per_lesion = 1
+            args.num_interactions_total_max = 1
+            args.evaluation_mode = 'global_non_corrective'
+            
+        args.checkpoint_name = "model.pt"
+        args.model_registry = "vista3d_segresnet_d"
+        args.non_standard_network = True   
+        args.patch_size_discrepancy = (512, 512, 16)
+        args.patch_size_inference = (256, 256, 64)
+        args.input_channels = 1
+        args.overlap = 0.25
+        args.sw_batch_size = 1
+        args.label_set = [0, 1]
+        args.mapped_label_set = [0, 133],
+        args.amp = True        
         
     # Default labels
     args.labels = {"lesion": 1, "background": 0}
