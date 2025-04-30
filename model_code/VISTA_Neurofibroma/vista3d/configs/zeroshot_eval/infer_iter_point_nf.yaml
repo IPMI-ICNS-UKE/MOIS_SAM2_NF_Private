@@ -3,14 +3,15 @@ fold: 0
 test_set: 1
 exps: nf_finetuned
 output_path: "$'./models/' + @exps"
-ckpt: "$@output_path + '/model_fold_' + str(@fold) + '.pt'"
+ckpt: "$@output_path + '/model_full_f' + str(@fold) + '.pt'"
 dataset_name: "Neurofibroma"
 label_set: [0,1]
+mapped_label_set: [0,1]
 max_iter: 10
 overlap: 0.25
 json_name: "$@dataset_name + 'test_' + str(@test_set) + '.json'"
 data_file_base_dir: '/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NF_SAM_Sandbox/data'
-data_list_file_path: $'./data/external/Neurofibroma_fold_' + str(@fold) + '.json'
+data_list_file_path: $'./data/external/Neurofibroma_test_1.json'
 log_output_file: "$@output_path + '/validation_auto_' + @dataset_name + '.log'"
 list_key: 'testing'
 input_channels: 1

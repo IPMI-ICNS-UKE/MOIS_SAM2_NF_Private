@@ -8,10 +8,10 @@ model: "vista3d_segresnet_d"
 data_file_base_dir: '/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NF_SAM_Sandbox/data'
 data_list_file_path: $'./data/external/Neurofibroma_fold_' + str(@fold) + '.json'
 ckpt_path: $@bundle_root + '/model_fold' + str(@fold)
-drop_label_prob: 0
-drop_point_prob: 1
-finetune: {activate: true, exclude_vars: null, pretrained_ckpt_name: $'models/model.pt'}
-fold: 2
+drop_label_prob: 1
+drop_point_prob: 0
+finetune: {activate: true, exclude_vars: null, pretrained_ckpt_name: $'models/model_original.pt'}
+fold: 1
 image_key: image
 input_channels: 1
 iter_num: 5
@@ -22,14 +22,13 @@ loss: {_target_: DiceCELoss, include_background: false, sigmoid: true, smooth_dr
   to_onehot_y: false}
 lr_scheduler: {_target_: monai.optimizers.WarmupCosineSchedule, optimizer: $@optimizer,
   t_total: $@num_epochs+1, warmup_multiplier: 0.1, warmup_steps: 0}
-max_backprompt: null
-max_foreprompt: null
-ignore_labelset: false
+max_backprompt: 0
+max_foreprompt: 4
 max_point: 3
 max_prompt: null
-num_epochs: 200
+num_epochs: 100
 freeze_epoch: 0
-freeze_head: 'point'
+freeze_head: 'auto'
 save_last: false
 save_all: false
 num_epochs_per_validation: 10
@@ -42,7 +41,7 @@ overlap_ratio: 0.25
 patch_size: [256, 256, 64]
 random_seed: 0
 resample_to_spacing: [0.625, 0.625, 7.8]
-skip_iter_prob: 1
+skip_iter_prob: 0
 transforms_train:
   _target_: Compose
   transforms:
@@ -74,16 +73,26 @@ transforms_train:
     allow_missing_keys: true
     mode: [constant, constant]
     spatial_size: '@patch_size'
-  - _target_: RandCropByLabelClassesd
+  - _target_: RandCropByPosNegLabeld
     keys:
       - '@image_key'
       - '@label_key'
     label_key: '@label_key'
-    num_classes: 133
-    num_samples: '@num_patches_per_image'
+    pos: 1
+    neg: 0
+    num_samples: 1
     spatial_size: '@patch_size'
-    ratios: $tuple(float(i >= 0) for i in range(133))
-    warn: false
+    allow_missing_keys: true
+  - _target_: RandZoomd
+    keys:
+      - '@image_key'
+      - '@label_key'
+    min_zoom: 0.8
+    max_zoom: 1.2
+    mode:
+      - trilinear
+      - nearest
+    prob: 0.2
     allow_missing_keys: true
   - _target_: RandSimulateLowResolutiond
     keys:
@@ -120,11 +129,26 @@ transforms_validate:
     nonzero: true
     channel_wise: true
     keys: '@image_key'
+  - _target_: EnsureTyped
+    keys: ['@image_key', '@label_key']
+    allow_missing_keys: true
+    track_meta: true
   - _target_: SpatialPadd
     keys: ['@image_key', '@label_key']
     allow_missing_keys: true
     mode: [constant, constant]
     spatial_size: '@patch_size'
+  - _target_: RandCropByLabelClassesd
+    keys:
+      - '@image_key'
+      - '@label_key'
+    label_key: '@label_key'
+    num_classes: 2
+    num_samples: 1
+    spatial_size: '@patch_size'
+    ratios: [0, 1]
+    warn: false
+    allow_missing_keys: true
   - _target_: CastToTyped
     dtype: [$torch.float32, $torch.uint8]
     keys: ['@image_key', '@label_key']

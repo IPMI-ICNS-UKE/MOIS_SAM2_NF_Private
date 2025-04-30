@@ -462,17 +462,21 @@ def run(config_file: Optional[Union[str, Sequence[str]]] = None, **override):
                     )
 
                     # need to convert label_prompt to global index
-                    label_prompt_global = []
-                    for i in label_prompt[:, 0].cpu().tolist():
-                        label_prompt_global.append(label_mapping[i])
+                    if label_prompt is None:
+                        label_prompt_global = None
+                        class_vector = None
+                    else:
+                        label_prompt_global = []
+                        for i in label_prompt[:, 0].cpu().tolist():
+                            label_prompt_global.append(label_mapping[i])
+                        class_vector = torch.tensor(label_prompt_global).to(device).unsqueeze(1)
+                    
                     with autocast():
                         outputs = model(
                             input_images=inputs,
                             point_coords=point,
                             point_labels=point_label,
-                            class_vector=torch.tensor(label_prompt_global)
-                            .to(device)
-                            .unsqueeze(1),
+                            class_vector=class_vector,
                             prompt_class=prompt_class,
                         )
                     # cumulate loss
@@ -600,7 +604,9 @@ def run(config_file: Optional[Union[str, Sequence[str]]] = None, **override):
                             with autocast(enabled=amp):
                                 val_outputs = None
                                 torch.cuda.empty_cache()
-                                val_outputs = sliding_window_inference(
+                                
+                                if freeze_head == "auto":
+                                    val_outputs = sliding_window_inference(
                                     inputs=val_data["image"].to(_device_in),
                                     roi_size=patch_size,
                                     sw_batch_size=1,
@@ -609,19 +615,44 @@ def run(config_file: Optional[Union[str, Sequence[str]]] = None, **override):
                                     overlap=overlap_ratio,
                                     sw_device=device,
                                     device=_device_out,
-                                    point_coords=None,
-                                    point_labels=None,
-                                    class_vector=label_prompt,
-                                    prompt_class=promot_class,
+                                    point_coords=torch.zeros(len(label_set), 1),
+                                    point_labels=not None,
+                                    class_vector=None,
+                                    prompt_class=None,
                                     labels=val_data["label"].to(_device_in),
                                     label_set=val_orig_set,
+                                    use_cfp=True,
+                                    brush_radius=None,
                                     val_point_sampler=partial(
                                         sample_points_patch_val,
-                                        mapped_label_set=val_label_set,
+                                        mapped_label_set=label_set,
                                         max_ppoint=1,
                                         use_center=True,
-                                    ),
-                                )
+                                        ),
+                                    )
+                                else:
+                                    val_outputs = sliding_window_inference(
+                                        inputs=val_data["image"].to(_device_in),
+                                        roi_size=patch_size,
+                                        sw_batch_size=1,
+                                        predictor=model_inferer,
+                                        mode="gaussian",
+                                        overlap=overlap_ratio,
+                                        sw_device=device,
+                                        device=_device_out,
+                                        point_coords=None,
+                                        point_labels=None,
+                                        class_vector=label_prompt,
+                                        prompt_class=promot_class,
+                                        labels=val_data["label"].to(_device_in),
+                                        label_set=val_orig_set,
+                                        val_point_sampler=partial(
+                                            sample_points_patch_val,
+                                            mapped_label_set=val_label_set,
+                                            max_ppoint=1,
+                                            use_center=True,
+                                        ),
+                                    )
                             try:
                                 val_outputs = post_pred(val_outputs[0, ...])
                             except BaseException:
