@@ -1,8 +1,9 @@
 #!/bin/bash
 export CUDA_VISIBLE_DEVICES=0
 export PYTHONPATH=$(dirname "$(dirname "$(pwd)")"):$PYTHONPATH
+export PYTHONPATH="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/model_code/VISTA_Neurofibroma/vista3d:$PYTHONPATH"
 
-TEST_SET_IDS=(1 2 3)
+TEST_SET_IDS=(1 2 3 4)
 
 NETWORK="MOIS_SAM2"
 EVAL_MODE="lesion_wise_corrective"

@@ -1,10 +1,11 @@
 #!/bin/bash
 export CUDA_VISIBLE_DEVICES=2
 export PYTHONPATH=$(dirname "$(dirname "$(pwd)")"):$PYTHONPATH
+export PYTHONPATH="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/model_code/VISTA_Neurofibroma/vista3d:$PYTHONPATH"
 
 NETWORK="SW-FastEdit"
 EVAL_MODE="global_corrective"
-TEST_SET_IDS=(1 2 3)
+TEST_SET_IDS=(1 2 3 4)
 
 
 # Please choose parameters
