@@ -253,7 +253,7 @@ class Interaction:
                 dsc_instance_dict[instance_id] = dsc_local
                 
                 # Insert the local prediction to global prediction, if the evaluation was done lesion-wise
-                if self.args.evaluation_mode != "global_corrective":
+                if self.args.evaluation_mode not in ["global_corrective", "global_non_corrective"]:
                     prediction_global = torch.max(prediction_global, batchdata["pred_local"])
                     prediction_global_after_single_interaction = torch.max(prediction_global_after_single_interaction, prediction_after_single_interaction)
             
@@ -299,7 +299,7 @@ class Interaction:
                 prediction_global = torch.max(prediction_global, prediction_global_exemplar_based)
             
             # If the evaluation was done globally, consider the last local interaction result as global
-            if self.args.evaluation_mode == "global_corrective":
+            if self.args.evaluation_mode in ["global_corrective", "global_non_corrective"]:
                 prediction_global = batchdata["pred_local"]
                 prediction_global_after_single_interaction = prediction_after_single_interaction
                 

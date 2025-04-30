@@ -3,7 +3,7 @@ import os
 from monai.networks.nets.dynunet import DynUNet
 import torch
 
-from evaluation.networks.custom_networks import DINsNetwork, SAM2Network, MOIS_SAM2Network
+from evaluation.networks.custom_networks import DINsNetwork, SAM2Network, MOIS_SAM2Network, VISTANetwork
 
 logger = logging.getLogger("evaluation_pipeline_logger")
 
@@ -81,6 +81,26 @@ def get_network(args, device):
                                    use_low_res_masks_for_com_detection=args.use_low_res_masks_for_com_detection,
                                    min_lesion_area_threshold=args.min_lesion_area_threshold
                                    )
+    
+    elif args.network_type == "VISTA":
+        model_path = os.path.join(args.model_dir, args.checkpoint_name)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file {model_path} not found.")
+       
+        network = VISTANetwork(
+            model_path=model_path,
+            device=device,
+            automatic_inference=args.use_automatic_vista_inference,
+            model_registry = args.model_registry,
+            input_channels = args.input_channels,
+            patch_size=args.patch_size_inference,
+            overlap=args.overlap,
+            sw_batch_size=args.sw_batch_size,
+            label_set=args.label_set,
+            mapped_label_set=args.mapped_label_set,
+            amp=args.amp
+        )
+        
     else:
         raise ValueError(f"Unsupported network: {args.network_type}")
 

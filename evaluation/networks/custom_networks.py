@@ -8,6 +8,8 @@ import onnxruntime as ort
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.amp import autocast
+from functools import partial
 from scipy.ndimage import label
 import torch.nn.functional as F
 from PIL import Image, ImageDraw
@@ -19,6 +21,10 @@ from hydra import initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from sam2.build_sam import build_sam2_video_predictor
 from sam2.build_mois_sam import build_mois_sam2_predictor
+
+from model_code.VISTA_Neurofibroma.vista3d.scripts.sliding_window import sliding_window_inference
+from model_code.VISTA_Neurofibroma.vista3d.scripts.train import CONFIG, infer_wrapper
+from model_code.VISTA_Neurofibroma.vista3d.vista3d.build_vista3d import vista_model_registry
 
 logger = logging.getLogger("evaluation_pipeline_logger")
 
@@ -820,4 +826,146 @@ class MOIS_SAM2Network(nn.Module):
                 prediction[:, :, slice_idx] = np.maximum(prediction[:, :, slice_idx], pred_slice)
 
         return prediction
-   
+
+
+class VISTANetwork(nn.Module):
+    def __init__(self, 
+                 model_path, 
+                 device,
+                 device_type = "cuda",
+                 automatic_inference = False,
+                 model_registry = "vista3d_segresnet_d",
+                 input_channels = 1,
+                 patch_size = [256, 256, 64],
+                 overlap = 0.5,
+                 sw_batch_size = 1,
+                 label_set = [0, 1],
+                 mapped_label_set = [0, 133],
+                 amp = True
+                ):
+        super().__init__()  
+        self.device = device
+        self.device_type = device_type
+        self.automatic_inference = automatic_inference  
+        self.patch_size = patch_size
+        self.overlap = overlap
+        self.sw_batch_size = sw_batch_size
+        self.label_set = label_set
+        self.mapped_label_set = mapped_label_set
+        self.amp = amp
+                    
+        model = vista_model_registry[model_registry](
+            in_channels=input_channels, 
+            image_size=patch_size
+            )
+        model = model.to(device)        
+        model.load_state_dict(torch.load(model_path, map_location=device), strict=True)
+        model.eval()
+        self.model_inferer = partial(infer_wrapper, model=model)
+
+    @staticmethod
+    def guidance_to_point_and_label_vista_fast(guidance):
+        """
+        Fast vectorized version to convert guidance dict to VISTA-style point and point_label.
+        
+        Args:
+            guidance (dict): 'background' and 'lesion' tensors of shape [B, *, 4].
+        
+        Returns:
+            point (torch.Tensor): [B, N, 3]
+            point_label (torch.Tensor): [B, N]
+        """
+        device = guidance['lesion'].device
+
+        # Extract (x,y,z) coordinates, ignoring the time/frame (index 0)
+        bg_points_raw = guidance['background'][..., 1:] if guidance['background'].shape[1] > 0 else None
+        lesion_points_raw = guidance['lesion'][..., 1:] if guidance['lesion'].shape[1] > 0 else None
+
+        # Get number of background and lesion points
+        n_bg = guidance['background'].shape[1] if guidance['background'].shape[1] > 0 else 0
+        n_lesion = guidance['lesion'].shape[1] if guidance['lesion'].shape[1] > 0 else 0
+        max_points = n_bg + n_lesion
+        
+        # Prepare lesion
+        if lesion_points_raw is not None:
+            
+            if bg_points_raw is not None:
+                lesion_points_raw = torch.cat([lesion_points_raw, bg_points_raw], dim=1)
+                lesion_labels = torch.cat([
+                    torch.ones((1, n_lesion), device=device, dtype=torch.int32),
+                    torch.zeros((1, n_bg), device=device, dtype=torch.int32)
+                ], dim=1)
+            else:
+                lesion_labels = torch.ones((1, n_lesion), device=device, dtype=torch.int32)
+        else:
+            lesion_points_raw = torch.zeros((1, max_points, 3), device=device, dtype=torch.int32)
+            lesion_labels = torch.full((1, max_points), -1, device=device, dtype=torch.int32)
+        
+        # Prepare background
+        bg_points_raw = torch.zeros((1, max_points, 3), device=device, dtype=torch.int32)
+        bg_labels = torch.full((1, max_points), -1, device=device, dtype=torch.int32)
+            
+        # Concatenate points and labels
+        points = torch.cat([bg_points_raw, lesion_points_raw], dim=0)  # [B, total_points, 3]
+        labels = torch.cat([bg_labels, lesion_labels], dim=0)          # [B, total_points]
+
+        return points, labels
+
+
+    def forward(self, x):
+        image = torch.unsqueeze(x["image"][:, 0, :], dim=1)
+        guidance = x["guidance"]
+        
+        with torch.no_grad():
+            with autocast(device_type=self.device_type, enabled=self.amp):
+                torch.cuda.empty_cache()
+                if self.automatic_inference:
+                    # Inference without interaction points                       
+                    outputs = sliding_window_inference(
+                        inputs=image.to(self.device), # Should be: torch.Size([1, 1, 801, 2853, 64])
+                        roi_size=self.patch_size,
+                        sw_batch_size=self.sw_batch_size,
+                        predictor=self.model_inferer,
+                        mode="gaussian",
+                        overlap=self.overlap,
+                        sw_device=self.device,
+                        device=self.device,
+                        point_coords=None,
+                        point_labels=None,
+                        class_vector=torch.tensor(self.mapped_label_set) # Should be tensor([  0, 133])
+                        .to(self.device),
+                        prompt_class=None,
+                        labels=None,
+                        label_set=None,
+                        use_cfp=True,
+                        brush_radius=None,
+                        val_point_sampler=None,
+                    )
+                                                                    
+                else:
+                    # Inference with interaction points
+                    # Convert the interactive points to 
+                    point, point_label = self.guidance_to_point_and_label_vista_fast(guidance)
+                    prompt_class = torch.tensor([[label] for label in self.label_set], device=self.device)
+                    outputs = sliding_window_inference(
+                        inputs=image,
+                        roi_size=self.patch_size,
+                        sw_batch_size=1,
+                        predictor=self.model_inferer,
+                        mode="gaussian",
+                        overlap=self.overlap,
+                        sw_device=self.device,
+                        device=self.device,
+                        point_coords=point, 
+                        point_labels=point_label,
+                        class_vector = None,
+                        prompt_class = prompt_class,
+                        labels=None,
+                        label_set=self.label_set,
+                        use_cfp=True,
+                        brush_radius=None,
+                        prev_mask=None,
+                        val_point_sampler=None,
+                    )        
+        return outputs           
+       

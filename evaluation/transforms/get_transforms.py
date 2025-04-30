@@ -1,6 +1,7 @@
 import logging
 import os
 import numpy as np
+import torch
 
 from monai.apps.deepedit.transforms import NormalizeLabelsInDatasetd
 from monai.data.folder_layout import FolderLayout
@@ -21,7 +22,8 @@ from monai.transforms import (
     NormalizeIntensityd,
     KeepLargestConnectedComponentd,
     Resized,
-    Flipd
+    Flipd,
+    SpatialPadd,    
 )
 
 from evaluation.transforms.custom_transforms import (
@@ -44,6 +46,8 @@ ORIENTATION_FOR_SAM2 = ("RSA")
 SPACING_FOR_MOISSAM2 = (-1, -1, -1)
 ORIENTATION_FOR_MOISSAM2 = ("SRA")
 TARGET_SIZE_FOR_MOISSAM2 = (1024, 1024, -1)
+SPACING_FOR_VISTA = (0.625, 0.625, 7.8)
+ORIENTATION_FOR_VISTA = ("RSA")
 
 
 def get_pre_transforms(args, 
@@ -78,9 +82,9 @@ def get_pre_transforms(args,
         NormalizeLabelsInDatasetd(keys=["label", "connected_component_label"], 
                                   label_names=args.labels),
         KeepLargestConnectedComponentd(keys="connected_component_label", 
-                                       num_components=args.num_lesions) if args.evaluation_mode != "global_corrective"
+                                       num_components=args.num_lesions) if args.evaluation_mode not in ["global_corrective", "global_non_corrective"]
         else Identityd(keys="connected_component_label"),
-        ConnectedComponentAnalysisd(keys="connected_component_label") if args.evaluation_mode != "global_corrective"
+        ConnectedComponentAnalysisd(keys="connected_component_label") if args.evaluation_mode not in ["global_corrective", "global_non_corrective"]
         else Identityd(keys="connected_component_label"),
     ]
     
@@ -135,6 +139,20 @@ def get_pre_transforms(args,
                 Flipd(input_keys, spatial_axis=1),
                 ScaleIntensityRangePercentilesIgnoreZerod(keys="image", lower=0.5, upper=99.5, 
                                                           out_min=0, out_max=255),
+            ]
+        )
+        
+    elif args.network_type == "VISTA":
+        spacing = SPACING_FOR_VISTA
+        orientation = ORIENTATION_FOR_VISTA
+        transforms.extend(
+            [
+                Orientationd(keys=input_keys, axcodes=orientation),
+                Spacingd(keys='image', pixdim=spacing),
+                Spacingd(keys=['label', 'connected_component_label'], 
+                         pixdim=spacing, mode="nearest"),
+                NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
+                SpatialPadd(keys=input_keys, spatial_size=args.patch_size_inference),
             ]
         )
         
@@ -212,6 +230,12 @@ def get_interaction_post_transforms(args, device="cpu"):
           (args.network_type == "MOIS_SAM2")):
         transforms = [
             EnsureTyped(keys="pred_local", device=device)
+        ]
+    elif (args.network_type == "VISTA"):
+        transforms = [
+            AsDiscreted(keys="pred_local", threshold=0.0, dtype=torch.uint8),
+            AsDiscreted(keys="pred_local", argmax=True),
+            EnsureTyped(keys="pred_local", device=device),
         ]
     else:
         raise ValueError(f"Unsupported network type: {args.network_type}") 
