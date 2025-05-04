@@ -10,7 +10,7 @@ TEST_SET_IDS=(1 2 3 4)
 
 # Please choose parameters
 FOLD=1
-NUM_INTERACTIONS_PER_LESION=8
+NUM_INTERACTIONS_PER_LESION=60
 
 echo "Running $NETWORK with evaluation mode: $EVAL_MODE"
 

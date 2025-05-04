@@ -325,10 +325,7 @@ class Interaction:
         logger.info(f"Finished case. Resulting global DSC: {dsc_global[-1]}. Total interactions {num_interactions_total[-1]}.")
         
         # Prepare directory for saving the reports
-        metrics_output_directory = os.path.join(
-            self.args.results_dir, "metrics", self.args.network_type, self.args.evaluation_mode,
-            f"TestSet_{self.args.test_set_id}", f"fold_{self.args.fold}", case_name
-        )
+        metrics_output_directory = os.path.join(self.args.metrics_dir, case_name)
         if not os.path.exists(metrics_output_directory):
             os.makedirs(metrics_output_directory)
         

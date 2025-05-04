@@ -55,7 +55,8 @@ def parse_args():
     parser.add_argument('--use_low_res_masks_for_com_detection', type=lambda x: bool(strtobool(x)), default=True, help="Use low-resulution semantic mask for detecting centers of mass of lesions.")
     parser.add_argument('--min_lesion_area_threshold', type=int, default=40, help="Minimal area of potential of lesion predicted with exemplars")
     parser.add_argument('--no_prop_beyond_lesions', type=lambda x: bool(strtobool(x)), default=True, help="Do not perform exemplar-based propagation if all lesions were processed with interactions.")
-    
+    parser.add_argument('--aggregate_exemplars_validation', type=str, choices=['aggregate_exemplars', 'stream_exemplars'], default=None, help="Validation of exemplar sampling strategy")
+
     # VISTA-specific arguments
     parser.add_argument('--use_automatic_vista_inference', type=lambda x: bool(strtobool(x)), default=False, help="Use fully automatic VISTA inference without interactions.")
 
@@ -80,7 +81,30 @@ def parse_args():
         args.dsc_global_max = 0.8
         
     # Derived arguments based on network type
-    args.model_dir = os.path.join(args.model_weights_dir, args.network_type, f"fold_{args.fold}")
+    if args.aggregate_exemplars_validation is not None:
+        network_type_extended = args.network_type + "_" + args.aggregate_exemplars_validation
+        args.data_folder_prefix = "Val"
+        output_postfix = f"_num_ex_{args.exemplar_num}"
+    else:
+        network_type_extended = args.network_type 
+        args.data_folder_prefix = "Ts"
+        output_postfix = ""
+    
+    args.model_dir = os.path.join(args.model_weights_dir, 
+                                  network_type_extended, 
+                                  f"fold_{args.fold}")
+    args.metrics_dir = os.path.join(args.results_dir, 
+                                    "metrics", 
+                                    network_type_extended + output_postfix, 
+                                    args.evaluation_mode, 
+                                    f"TestSet_{args.test_set_id}", 
+                                    f"fold_{args.fold}")
+    args.prediction_dir = os.path.join(args.results_dir, 
+                                       "predictions", 
+                                       network_type_extended + output_postfix, 
+                                       args.evaluation_mode, 
+                                       f"TestSet_{args.test_set_id}", 
+                                       f"fold_{args.fold}")
     
     if args.network_type == "SW-FastEdit":
         args.checkpoint_name = "checkpoint.pt"

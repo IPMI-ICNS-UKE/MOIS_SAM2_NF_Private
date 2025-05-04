@@ -24,11 +24,11 @@ def get_evaluation_datalist(args):
             - `"label"` (str): Path to the corresponding label file.
             - `"connected_component_label"` (str): Path to the label file (same as `"label"` for consistency).
     """
-    logger.info(f"Getting data list from: {os.path.join(args.input_dir, f'imagesTs_{args.test_set_id}')}")
+    logger.info(f"Getting data list from: {os.path.join(args.input_dir, f'images{args.data_folder_prefix}_{args.test_set_id}')}")
     
     # Get all available images and labels
-    image_files = sorted(glob.glob(os.path.join(args.input_dir, f"imagesTs_{args.test_set_id}", "*.nii.gz")))
-    label_files = sorted(glob.glob(os.path.join(args.input_dir, f"labelsTs_{args.test_set_id}", "*.nii.gz")))
+    image_files = sorted(glob.glob(os.path.join(args.input_dir, f"images{args.data_folder_prefix}_{args.test_set_id}", "*.nii.gz")))
+    label_files = sorted(glob.glob(os.path.join(args.input_dir, f"labels{args.data_folder_prefix}_{args.test_set_id}", "*.nii.gz")))
     
     # Build the train and validation datasets
     datalist = [

@@ -267,9 +267,7 @@ def get_post_transforms(args, pre_transforms, device="cpu"):
     """
     
     if args.save_predictions:
-        predictions_output_dir = os.path.join(
-            args.results_dir, "predictions", args.network_type, args.evaluation_mode,
-            f"TestSet_{args.test_set_id}", f"fold_{args.fold}")
+        predictions_output_dir = args.prediction_dir
         
         if not os.path.exists(predictions_output_dir):
             os.makedirs(predictions_output_dir)
