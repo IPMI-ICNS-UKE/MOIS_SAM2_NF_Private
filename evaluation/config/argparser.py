@@ -56,6 +56,7 @@ def parse_args():
     parser.add_argument('--min_lesion_area_threshold', type=int, default=40, help="Minimal area of potential of lesion predicted with exemplars")
     parser.add_argument('--no_prop_beyond_lesions', type=lambda x: bool(strtobool(x)), default=True, help="Do not perform exemplar-based propagation if all lesions were processed with interactions.")
     parser.add_argument('--aggregate_exemplars_validation', type=str, choices=['aggregate_exemplars', 'stream_exemplars'], default=None, help="Validation of exemplar sampling strategy")
+    parser.add_argument('--lesion_vs_scan_validation', type=str, choices=['lesion_wise_corrective', 'global_corrective'], default=None, help="Validation of lesion-wise vs scan-wise training")
 
     # VISTA-specific arguments
     parser.add_argument('--use_automatic_vista_inference', type=lambda x: bool(strtobool(x)), default=False, help="Use fully automatic VISTA inference without interactions.")
@@ -85,6 +86,13 @@ def parse_args():
         network_type_extended = args.network_type + "_" + args.aggregate_exemplars_validation
         args.data_folder_prefix = "Val"
         output_postfix = f"_num_ex_{args.exemplar_num}"
+    elif args.lesion_vs_scan_validation is not None:
+        network_type_extended = args.network_type 
+        args.data_folder_prefix = "Val"
+        if args.lesion_vs_scan_validation == "lesion_wise_corrective":
+            output_postfix = f"_lesion_wise"
+        else:
+            output_postfix = f"_scan_wise"
     else:
         network_type_extended = args.network_type 
         args.data_folder_prefix = "Ts"
