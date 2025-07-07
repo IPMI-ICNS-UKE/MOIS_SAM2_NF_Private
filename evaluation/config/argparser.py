@@ -18,7 +18,7 @@ def parse_args():
     # General arguments
     parser.add_argument('--network_type', type=str, choices=['DINs', 'SW-FastEdit', 'SAM2', 'MOIS_SAM2', 'VISTA'], required=True, help="Type of network to evaluate")
     parser.add_argument('--fold', type=int, choices=[1, 2, 3], required=True, help="Cross-validation fold")
-    parser.add_argument('--test_set_id', type=int, choices=[1, 2, 3, 4], required=True, help="Evaluation data subset")
+    parser.add_argument('--test_set_id', type=int, choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], required=True, help="Evaluation data subset")
     parser.add_argument('--evaluation_mode', type=str, choices=['lesion_wise_non_corrective', 'lesion_wise_corrective', 'global_corrective', 'global_non_corrective'], required=True, help="Evaluation mode")
     
     # Path arguments
@@ -58,6 +58,7 @@ def parse_args():
     parser.add_argument('--aggregate_exemplars_validation', type=str, choices=['aggregate_exemplars', 'stream_exemplars'], default=None, help="Validation of exemplar sampling strategy")
     parser.add_argument('--lesion_vs_scan_validation', type=str, choices=['lesion_wise_corrective', 'global_corrective'], default=None, help="Validation of lesion-wise vs scan-wise training")
     parser.add_argument('--evaluate_num_lesions', type=lambda x: bool(strtobool(x)), default=False, help="Evaluation of the effect of the prompted lesions on the segmentation performance.")
+    parser.add_argument('--force_network_postfix', type=str, choices=['sam_automatic', 'sam_exemplar', 'main', 'no_pointer', 'no_temporal'], default=None, help="Validation of exemplar sampling strategy")
 
 
     # VISTA-specific arguments
@@ -89,7 +90,10 @@ def parse_args():
         args.data_folder_prefix = "Val"
         output_postfix = f"_num_ex_{args.exemplar_num}"
     elif args.lesion_vs_scan_validation is not None:
-        network_type_extended = args.network_type 
+        if args.force_network_postfix is not None:
+            network_type_extended = args.network_type + "_" + args.force_network_postfix
+        else:
+            network_type_extended = args.network_type
         args.data_folder_prefix = "Val"
         if args.lesion_vs_scan_validation == "lesion_wise_corrective":
             output_postfix = f"_lesion_wise"
