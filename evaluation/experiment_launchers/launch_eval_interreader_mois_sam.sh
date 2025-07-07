@@ -1,31 +1,32 @@
 #!/bin/bash
-export CUDA_VISIBLE_DEVICES=1
+export CUDA_VISIBLE_DEVICES=0
 export PYTHONPATH=$(dirname "$(dirname "$(pwd)")"):$PYTHONPATH
 export PYTHONPATH="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/model_code/VISTA_Neurofibroma/vista3d:$PYTHONPATH"
 
-TEST_SET_IDS=(1 2 3 4)
+TEST_SET_IDS=(10)
 FOLD=1
 EVALUATE_NUM_LESIONS=true
-NUM_LESIONS_AND_EXEMPLARS=(1 2 3 4 5 6 7 8 9 10) # Should be equal to the number of exemplars
+NUM_LESIONS_AND_EXEMPLARS=(20) # Should be equal to the number of exemplars
 
-NETWORK="SAM2"
+NETWORK="MOIS_SAM2" 
 NUM_INTERACTIONS_PER_LESION=1
 EVAL_MODE="lesion_wise_corrective"
 USE_COM_DECODER=false
 INFERENCE_ALL_SLICES=true
-USE_ONLY_PROMPTED_EXEMPLARS=true
+USE_ONLY_PROMPTED_EXEMPLARS=true # Only interacted exemplars
 
 FILTER_EXEMPLAR_PREDICTION=true
 MIN_LESION_AREA=10
 NO_PROP_BEYOND_LESIONS=true
 
-CACHE_DIR="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/evaluation/cache_sam_1"
+CACHE_DIR="/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarkingPrivate/evaluation/cache_mois_sam_1"
+
 
 echo "Running $NETWORK with evaluation mode: $EVAL_MODE"
 
 for TEST_SET_ID in "${TEST_SET_IDS[@]}"; do
     for NUM_EXEMPLARS in "${NUM_LESIONS_AND_EXEMPLARS[@]}"; do
-        echo "Test set: $TEST_SET_ID | Num Exemplars: $NUM_EXEMPLARS"
+        echo "Test set: $TEST_SET_ID | Num Exemplars: $NUM_EXEMPLARS | Fold: $FOLD"
 
         python ../pipelines/evaluation_pipeline.py \
             --cache_dir $CACHE_DIR \
