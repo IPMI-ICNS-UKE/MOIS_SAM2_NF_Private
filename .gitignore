@@ -204,3 +204,6 @@ evaluation/cache/*
 !evaluation/cache/README.MD
 results/*
 !results/*.ipynb
+monai_label_app/data_folder/*
+!monai_label_app/data_folder/README.MD
+!monai_label_app/nf_segmentation_app/lib
