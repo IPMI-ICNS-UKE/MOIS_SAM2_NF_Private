@@ -18,7 +18,7 @@ class ImageCache:
         self.cache_path = (
             os.path.join(cache_path, "sam2")
             if cache_path
-            else os.path.join(pathlib.Path.home(), "cache", "monailabel", "sam2")
+            else os.path.join(pathlib.Path.home(), ".cache", "monailabel", "sam2")
         )
         print('CACHE_CACHE_CACHE')
         print(self.cache_path)

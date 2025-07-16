@@ -1,19 +1,19 @@
 from typing import Callable, Sequence, Union, Any
 from tqdm import tqdm
 from time import time
-import copy
 import logging
+import copy
 import os
 import torch
 import numpy as np
 from PIL import Image
-from PIL import ImageDraw
 import pylab
 from hydra import initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
-from sam2.build_sam import build_sam2_video_predictor
-from sam2.build_mois_sam import build_mois_sam2_predictor
+
 from monai.data.meta_tensor import MetaTensor
+from monai.inferers import Inferer, SimpleInferer
+from monai.utils import set_determinism
 from monai.transforms import (
     LoadImaged,
     EnsureChannelFirstd,
@@ -23,26 +23,19 @@ from monai.transforms import (
     ToNumpyd,
     SqueezeDimd
 )
-
-from lib.transforms.transforms import (ScaleIntensityRangePercentilesIgnoreZerod,
-                                       ReorientToOriginald,
-                                       TransformPointsd)
-from lib.cache_logic.cache_logic import ImageCache
-from monai.utils import set_determinism
-from monai.inferers import Inferer, SimpleInferer
-from monailabel.transform.post import Restored
 from monailabel.interfaces.tasks.infer_v2 import InferType
-from monailabel.tasks.infer.basic_infer import BasicInferTask, CallBackTypes
-
+from monailabel.tasks.infer.basic_infer import BasicInferTask
 from monailabel.utils.others.generic import (
-    device_list,
-    download_file,
     get_basename_no_ext,
     md5_digest,
     name_to_device,
-    remove_file,
     strtobool,
 )
+from sam2.build_mois_sam import build_mois_sam2_predictor
+from lib.cache_logic.cache_logic import ImageCache
+from lib.transforms.transforms import (ScaleIntensityRangePercentilesIgnoreZerod,
+                                       ReorientToOriginald,
+                                       TransformPointsd)
 
 logger = logging.getLogger(__name__)
 
@@ -115,13 +108,10 @@ class MOISSAM_Interaction(BasicInferTask):
             LoadImaged(keys=["image"], reader="ITKReader"),
             EnsureChannelFirstd(keys=["image"]),
             Orientationd(keys=["image"], axcodes=self.orientation),
-            
-            # NEW: transform the foreground/background points before further image flips
             TransformPointsd(keys=["foreground", "background"], 
                             ref_image_key="image", 
                             orientation=self.orientation, 
                             flip_axes=[0, 1]),
-            
             Flipd(["image"], spatial_axis=0),
             Flipd(["image"], spatial_axis=1),
             ScaleIntensityRangePercentilesIgnoreZerod(keys="image", lower=0.5, upper=99.5, 
@@ -182,7 +172,30 @@ class MOISSAM_Interaction(BasicInferTask):
             predictor.com_scale_coefficient = self.com_scale_coefficient
         return predictor   
 
-
+    def move_to_cpu(self, obj):
+        if isinstance(obj, torch.Tensor):
+            return obj.cpu()
+        elif isinstance(obj, dict):
+            return {k: self.move_to_cpu(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.move_to_cpu(v) for v in obj]
+        elif isinstance(obj, tuple):
+            return tuple(self.move_to_cpu(v) for v in obj)
+        else:
+            return obj
+    
+    def move_to_device(self, obj, device):
+        if isinstance(obj, torch.Tensor):
+            return obj.to(device)
+        elif isinstance(obj, dict):
+            return {k: self.move_to_device(v, device) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self.move_to_device(v, device) for v in obj]
+        elif isinstance(obj, tuple):
+            return tuple(self.move_to_device(v, device) for v in obj)
+        else:
+            return obj
+    
     def run_inferer(self, image_tensor, set_image_state, request, data, debug=False):
         self.device = name_to_device(request.get("device", "cuda"))
         reset_state = strtobool(request.get("reset_state", "false"))
@@ -214,11 +227,21 @@ class MOISSAM_Interaction(BasicInferTask):
         # Set Expiry Time
         image_cache.cached_dirs[video_dir] = time() + image_cache.cache_expiry_sec
         
-        print("RESET STATE OR SET IMAGE STATE: ", reset_state, set_image_state)
         if reset_state or set_image_state:
             if self.inference_state:
                 predictor.reset_state(self.inference_state)
             self.inference_state = predictor.init_state(video_path=video_dir)
+        
+        exemplars_path = os.path.join(video_dir, "exemplars.pt")
+        if os.path.exists(exemplars_path):
+            try:
+                exemplars = torch.load(exemplars_path, map_location="cpu")
+                exemplars = self.move_to_device(exemplars, self.device)
+                self.inference_state["exemplars"] = exemplars
+                predictor.exemplars_dict = exemplars
+                logger.info(f"Restored exemplars from: {exemplars_path}")
+            except Exception as e:
+                logger.info(f"Failed to load exemplars: {e}")
             
         logger.info(f"Image Shape: {image_tensor.shape}")
         fps: dict[int, Any] = {}
@@ -226,13 +249,13 @@ class MOISSAM_Interaction(BasicInferTask):
         sids = set()
         for key in {"foreground", "background"}:
             for p in request[key]:
-                sid = p[2] # MODIFIED
+                sid = p[2] 
                 sids.add(sid)
                 kps = fps if key == "foreground" else bps
                 if kps.get(sid):
-                    kps[sid].append([p[0], p[1]]) # MODIFIED
+                    kps[sid].append([p[0], p[1]]) 
                 else:
-                    kps[sid] = [[p[0], p[1]]] # MODIFIED
+                    kps[sid] = [[p[0], p[1]]]
 
         pred = np.zeros(tuple(image_tensor.shape))
         for sid in sorted(sids):
@@ -281,7 +304,10 @@ class MOISSAM_Interaction(BasicInferTask):
         data["pred"] = pred
         data["image_path"] = request["image"]
         data["image"] = image_tensor
-
+        
+        exemplar_path = os.path.join(video_dir, "exemplars.pt")
+        cpu_state = self.move_to_cpu(self.inference_state["exemplars"])
+        torch.save(cpu_state, exemplar_path)
         return data
 
 
