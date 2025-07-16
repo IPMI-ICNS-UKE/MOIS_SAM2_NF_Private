@@ -233,7 +233,7 @@ class MOISSAM_Propagation(BasicInferTask):
             _, _, semantic_logits, _ = predictor.find_exemplars_in_slice(self.inference_state, slice_idx)
             pred[:, :, slice_idx] = (semantic_logits[0][0] > 0.0).cpu().numpy()
             
-        pred = torch.from_numpy(pred.astype(np.uint8) )
+        pred = torch.from_numpy(pred.astype(np.uint8))
         meta = image_tensor.meta
         pred = MetaTensor(pred, meta=meta)
 

@@ -233,6 +233,8 @@ class TransformPointsd(MapTransform):
     def __call__(self, data):
         d = dict(data)
         img = d[self.ref_image_key]
+        print("LABEL"*10)
+        print(img)
         meta = img.meta if hasattr(img, "meta") else img.get("meta", {})
 
         orig_affine = meta.get("original_affine", meta.get("affine", None))

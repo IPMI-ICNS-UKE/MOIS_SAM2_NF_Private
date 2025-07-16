@@ -104,3 +104,14 @@ class NFSegmentationApp(MONAILabelApp):
     def init_trainers(self) -> Dict[str, TrainTask]:
         trainers: Dict[str, TrainTask] = {}
         return trainers
+    
+    def infer(self, request, datastore=None):
+        image_id = request["image"]
+        
+        if isinstance(image_id, str):
+            datastore = datastore if datastore else self.datastore()
+        
+        label_id = datastore.get_label_by_image_id(image_id, tag="final")
+        label = datastore.get_label_uri(label_id, label_tag="final")
+        request["label"] = label
+        return super().infer(request, datastore)
