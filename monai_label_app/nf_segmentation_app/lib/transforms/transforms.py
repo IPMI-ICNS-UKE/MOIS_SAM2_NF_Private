@@ -216,3 +216,58 @@ class ReorientToOriginald(MapTransform):
         return d
 
 
+
+class TransformPointsd(MapTransform):
+    def __init__(
+        self,
+        keys: KeysCollection,
+        ref_image_key: str = "image",
+        orientation: str = "SRA",  # Target orientation
+        flip_axes: list[int] = [0, 1],
+    ):
+        super().__init__(keys)
+        self.ref_image_key = ref_image_key
+        self.orientation = orientation
+        self.flip_axes = flip_axes
+
+    def __call__(self, data):
+        d = dict(data)
+        img = d[self.ref_image_key]
+        meta = img.meta if hasattr(img, "meta") else img.get("meta", {})
+
+        orig_affine = meta.get("original_affine", meta.get("affine", None))
+        spatial_shape = np.array(meta["spatial_shape"])  # shape: (X, Y, Z)
+        shape_dict = dict(zip(["x", "y", "z"], spatial_shape))
+
+        # Build orientation transform
+        orig_ornt = nib.aff2axcodes(orig_affine)
+        tgt_ornt = tuple(self.orientation)
+        ornt_transform = nib.orientations.ornt_transform(
+            nib.orientations.axcodes2ornt(orig_ornt),
+            nib.orientations.axcodes2ornt(tgt_ornt)
+        )
+
+        # Example: [[1, -1], [0, 1], [2, -1]]
+        axes = ornt_transform[:, 0].astype(int)
+        flips = ornt_transform[:, 1].astype(int)
+
+        for key in self.keys:
+            transformed = []
+            for pt in d.get(key, []):
+                pt = np.array(pt, dtype=float)
+
+                # Step 1: reorder axes
+                pt = pt[axes]
+
+                # Step 2: apply image flips
+                if 0 in self.flip_axes: # Flip Z
+                    pt[2] = spatial_shape[2] - 1 - pt[2]
+                if 1 in self.flip_axes:
+                    pt[0] = spatial_shape[1] - 1 - pt[0]
+                if 2 in self.flip_axes:
+                    pt[1] = spatial_shape[0] - 1 - pt[1]
+
+                pt = pt.astype(int)
+                transformed.append(pt.tolist())
+            d[key] = transformed
+        return d

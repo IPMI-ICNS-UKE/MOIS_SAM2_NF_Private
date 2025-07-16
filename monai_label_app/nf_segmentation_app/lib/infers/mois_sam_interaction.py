@@ -25,7 +25,8 @@ from monai.transforms import (
 )
 
 from lib.transforms.transforms import (ScaleIntensityRangePercentilesIgnoreZerod,
-                                       ReorientToOriginald)
+                                       ReorientToOriginald,
+                                       TransformPointsd)
 from lib.cache_logic.cache_logic import ImageCache
 from monai.utils import set_determinism
 from monai.inferers import Inferer, SimpleInferer
@@ -114,6 +115,13 @@ class MOISSAM_Interaction(BasicInferTask):
             LoadImaged(keys=["image"], reader="ITKReader"),
             EnsureChannelFirstd(keys=["image"]),
             Orientationd(keys=["image"], axcodes=self.orientation),
+            
+            # NEW: transform the foreground/background points before further image flips
+            TransformPointsd(keys=["foreground", "background"], 
+                            ref_image_key="image", 
+                            orientation=self.orientation, 
+                            flip_axes=[0, 1]),
+            
             Flipd(["image"], spatial_axis=0),
             Flipd(["image"], spatial_axis=1),
             ScaleIntensityRangePercentilesIgnoreZerod(keys="image", lower=0.5, upper=99.5, 
@@ -192,7 +200,6 @@ class MOISSAM_Interaction(BasicInferTask):
             image_cache.cache_path, get_basename_no_ext(image_path) if debug else md5_digest(image_path)
         )
         if not os.path.isdir(video_dir):
-            need_to_init = True
             os.makedirs(video_dir, exist_ok=True)
             for slice_idx in tqdm(range(image_tensor.shape[-1])):
                 slice_np = image_tensor[:, :, slice_idx].numpy()
@@ -207,42 +214,33 @@ class MOISSAM_Interaction(BasicInferTask):
         # Set Expiry Time
         image_cache.cached_dirs[video_dir] = time() + image_cache.cache_expiry_sec
         
+        print("RESET STATE OR SET IMAGE STATE: ", reset_state, set_image_state)
         if reset_state or set_image_state:
             if self.inference_state:
                 predictor.reset_state(self.inference_state)
             self.inference_state = predictor.init_state(video_path=video_dir)
             
-        
-        
-        
-        
         logger.info(f"Image Shape: {image_tensor.shape}")
         fps: dict[int, Any] = {}
         bps: dict[int, Any] = {}
         sids = set()
         for key in {"foreground", "background"}:
             for p in request[key]:
-                sid = image_tensor.shape[2] - 1 - p[2] # MODIFIED
+                sid = p[2] # MODIFIED
                 sids.add(sid)
                 kps = fps if key == "foreground" else bps
                 if kps.get(sid):
-                    kps[sid].append([p[0], image_tensor.shape[0] - 1 - p[1]]) # MODIFIED
+                    kps[sid].append([p[0], p[1]]) # MODIFIED
                 else:
-                    kps[sid] = [[p[0], image_tensor.shape[0] - 1 - p[1]]] # MODIFIED
-        
-        
-        print("Image Tensor:", image_tensor.shape)
-        print("Points: ", fps, bps)
-        print("Slices: ", sids)
-        print("Instance id: ", current_instance_id)
-        
+                    kps[sid] = [[p[0], p[1]]] # MODIFIED
+
         pred = np.zeros(tuple(image_tensor.shape))
         for sid in sorted(sids):
             fp = fps.get(sid, [])
             bp = bps.get(sid, [])
 
             point_coords = fp + bp
-            point_coords = [[p[0], p[1]] for p in point_coords]  # Flip x,y => y,x # MODIFIED
+            point_coords = [[p[1], p[0]] for p in point_coords] # Flip x,y => y,x
             point_labels = [1] * len(fp) + [0] * len(bp)
             
             o_frame_ids, o_obj_ids, o_mask_logits = predictor.add_new_points_or_box(
@@ -259,30 +257,27 @@ class MOISSAM_Interaction(BasicInferTask):
         
         # Forward-slice memory-based propagation + add non-prompted exemplars
         pred_forward = np.zeros(tuple(image_tensor.shape))
-        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, add_exemplar=True):
-            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, 
+                                                                                        current_instance_id, 
+                                                                                        max_frame_num_to_track=3,
+                                                                                        add_exemplar=True):
             pred_forward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
         
         #  Backward-slice memory-based propagation + add non-prompted exemplars
         pred_backward = np.zeros(tuple(image_tensor.shape))
-        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, current_instance_id, reverse=True, add_exemplar=True):
-            logger.info(f"propagate: {out_frame_idx} - mask_logits: {out_mask_logits.shape}; obj_ids: {out_obj_ids}")
+        for out_frame_idx, out_obj_ids, out_mask_logits in predictor.propagate_in_video(self.inference_state, 
+                                                                                        current_instance_id, 
+                                                                                        max_frame_num_to_track=3,
+                                                                                        reverse=True, add_exemplar=True):
             pred_backward[:, :, out_frame_idx] = (out_mask_logits[0][0] > 0.0).cpu().numpy()
                 
         # Merge forward and backward propagation
         pred_prop = np.logical_or(pred_forward, pred_backward).astype(np.uint8)
-        pred = np.logical_or(pred, pred_prop).astype(np.uint8)
-        
-        print("#"*50)
-        print("Image: ", image_tensor.shape)
-        print("Pred: ", pred.shape)
-        
+        pred = np.logical_or(pred, pred_prop).astype(np.uint8)        
         pred = torch.from_numpy(pred)
         meta = image_tensor.meta
         pred = MetaTensor(pred, meta=meta)
-        
-        print("SUM: ", torch.sum(pred))
-        
+
         data["pred"] = pred
         data["image_path"] = request["image"]
         data["image"] = image_tensor
@@ -298,18 +293,12 @@ class MOISSAM_Interaction(BasicInferTask):
         req.update(request)
         data = copy.deepcopy(req)
         
-        start = time()
+        start = time()        
         pre_transforms = self.pre_transforms(data)
         data = self.run_pre_transforms(data, pre_transforms)
         latency_pre = time() - start
         
-        ####################################################################################
-        # Inference logic
-        ####################################################################################
-        start = time()
-        
-        # data = self.run_inferer(data, device=device)
-        
+        start = time()        
         logger.info(f"Infer Request: {request}")
         image_path = request["image"]
         image_tensor = self.image_cache.get(image_path)
@@ -318,8 +307,12 @@ class MOISSAM_Interaction(BasicInferTask):
         
         if "foreground" not in request:
             request["foreground"] = []
+        else:
+            request["foreground"] = data["foreground"]
         if "background" not in request:
             request["background"] = []
+        else:
+            request["background"] = data["background"]
         if "roi" not in request:
             request["roi"] = []
         
@@ -332,20 +325,8 @@ class MOISSAM_Interaction(BasicInferTask):
                             
         data = self.run_inferer(image_tensor, set_image_state, request, data)
         latency_inferer = time() - start
-        
-        ####################################################################################
 
-        start = time()
-        
-        pre_names = dict()
-        transforms = []
-        for t in (pre_transforms):
-            if hasattr(t, "inverse"):
-                pre_names[t.__class__.__name__] = t
-                transforms.append(t)
-        data['pred'].meta
-        
-        
+        start = time()        
         data = self.run_invert_transforms(data, pre_transforms, self.inverse_transforms(data))
         latency_invert = time() - start
 
