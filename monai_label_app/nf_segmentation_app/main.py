@@ -17,9 +17,6 @@ from monailabel.interfaces.datastore import Datastore, DefaultLabelTag
 from monailabel.config import settings
 
 import lib.configs
-from lib.infers.mois_sam_interaction import MOISSAM_Interaction
-from lib.infers.mois_sam_propagation import MOISSAM_Propagation
-from lib.infers.false_positive_removal import FalsePositiveRemoval
 
 logger = logging.getLogger(__name__)
 
