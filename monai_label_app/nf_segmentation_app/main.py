@@ -113,5 +113,6 @@ class NFSegmentationApp(MONAILabelApp):
         
         label_id = datastore.get_label_by_image_id(image_id, tag="final")
         label = datastore.get_label_uri(label_id, label_tag="final")
-        request["label"] = label
+        request["label_mask"] = label
+        request["reset_state"] = True
         return super().infer(request, datastore)
