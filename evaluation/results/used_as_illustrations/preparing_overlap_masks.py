@@ -1,10 +1,10 @@
 # Re-import necessary libraries after kernel reset
 import SimpleITK as sitk
-import os
 from pathlib import Path
 
 # Define base directory
 base_dir = Path("./")
+
 
 # Define target folders and prediction suffixes
 folders = ["TS1", "TS2", "TS3", "TS4", "DiffTs1", "DiffTs2"]

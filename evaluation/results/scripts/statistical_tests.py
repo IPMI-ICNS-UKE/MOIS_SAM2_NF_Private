@@ -1,6 +1,7 @@
 from itertools import combinations
 from scipy.stats import wilcoxon
 
+
 def compare_models_wilcoxon(results_by_model, alpha=0.05, correction='bonferroni'):
     """
     Perform pairwise Wilcoxon signed-rank tests across models.

@@ -5,6 +5,7 @@ from metrics import (compute_detection_and_lesion_metrics, compute_scan_dice)
 from joblib import Parallel, delayed
 from scipy.ndimage import find_objects
 
+
 def process_tumor(i, instance_mask_src, ref_mask, src_mask, gt_flag):
     """
     Check if lesion i in instance_mask_src overlaps with ref_mask.

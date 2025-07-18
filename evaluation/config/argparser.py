@@ -60,7 +60,6 @@ def parse_args():
     parser.add_argument('--evaluate_num_lesions', type=lambda x: bool(strtobool(x)), default=False, help="Evaluation of the effect of the prompted lesions on the segmentation performance.")
     parser.add_argument('--force_network_postfix', type=str, choices=['sam_automatic', 'sam_exemplar', 'main', 'no_pointer', 'no_temporal'], default=None, help="Validation of exemplar sampling strategy")
 
-
     # VISTA-specific arguments
     parser.add_argument('--use_automatic_vista_inference', type=lambda x: bool(strtobool(x)), default=False, help="Use fully automatic VISTA inference without interactions.")
 
@@ -124,6 +123,7 @@ def parse_args():
                                        f"TestSet_{args.test_set_id}", 
                                        f"fold_{args.fold}")
     
+    # Model specific configurations
     if args.network_type == "SW-FastEdit":
         args.checkpoint_name = "checkpoint.pt"
         args.sw_batch_size = 4

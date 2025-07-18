@@ -12,8 +12,7 @@ from torch.amp import autocast
 from functools import partial
 from scipy.ndimage import label
 import torch.nn.functional as F
-from PIL import Image, ImageDraw
-from monai.inferers import SlidingWindowInferer
+from PIL import Image
 
 from evaluation.utils.image_cache import ImageCache
 # Importing SAM2 dependencies
@@ -286,6 +285,34 @@ class SAM2Network(nn.Module):
 
 
 class MOIS_SAM2Network(nn.Module):
+    """
+    MOIS-SAM2Network is a multi-object interactive segmentation model built on top of SAM2.
+
+    It supports lesion-wise and scan-wise segmentation with exemplar-based semantric propagation. 
+    It works on full 3D volumes and enables efficient click-driven segmentation refinement via 
+    memory-based propagation and exemplar reuse.
+
+    Key Features:
+        - Interactive segmentation with click-based prompts.
+        - Forward/backward propagation of segmentations.
+        - Exemplar memory bank for lesion refinement.
+        - Global inference using previously segmented lesions (exemplars).
+
+    Args:
+        model_path (str): Path to the model checkpoint.
+        config_path (str): Path to the config YAML used by the SAM2 predictor.
+        cache_path (str): Path to store 2D image slices during inference.
+        device (str): 'cuda' or 'cpu' for inference.
+        exemplar_use_com (bool): Use center-of-mass points derived from exemplars for inference.
+        exemplar_inference_all_slices (bool): Apply inference on all slices or just prompted slices.
+        exemplar_num (int): Max number of stored exemplars in memory.
+        exemplar_use_only_prompted (bool): If True, use only user-clicked regions for memory.
+        filter_prev_prediction_components (bool): Suppress overlapping predictions.
+        overlap_threshold (float): IOU threshold for overlap removal logic.
+        use_low_res_masks_for_com_detection (bool): Use low-res mask for fast COM detection.
+        default_image_size (int): Image size before downsampling.
+        min_lesion_area_threshold (int): Threshold for lesion area (in px) to be considered valid.
+    """
     def __init__(self, 
                  model_path, 
                  config_path, 
@@ -829,6 +856,26 @@ class MOIS_SAM2Network(nn.Module):
 
 
 class VISTANetwork(nn.Module):
+    """
+    VISTA3D-based segmentation model with interactive or automatic inference.
+
+    Wraps the official VISTA3D implementation for lesion segmentation in 3D volumes,
+    using sliding window inference with optional click-based user guidance.
+
+    Args:
+        model_path (str): Path to the trained model checkpoint (.pt file).
+        device (str): Computation device (e.g. torch.device("cuda")).
+        device_type (str): String identifier for AMP autocast context (default: "cuda").
+        automatic_inference (bool): If True, performs class-based inference with no clicks.
+        model_registry (str): Name of the VISTA model architecture from registry.
+        input_channels (int): Number of input channels (e.g., 1 for grayscale MRI).
+        patch_size (list[int]): Patch size for sliding window inference.
+        overlap (float): Overlap ratio for sliding windows.
+        sw_batch_size (int): Batch size for SW inference.
+        label_set (list[int]): Raw label classes (e.g., [0, 1]).
+        mapped_label_set (list[int]): Re-mapped labels (e.g., [0, 133]).
+        amp (bool): Use Automatic Mixed Precision (AMP).
+    """
     def __init__(self, 
                  model_path, 
                  device,

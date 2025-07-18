@@ -3,6 +3,7 @@ from pathlib import Path
 import shutil
 from tqdm import tqdm
 
+
 # Define mapping based on the image content
 testset_mappings = {
     "TestSet_1": {

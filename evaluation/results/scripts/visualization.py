@@ -1,5 +1,6 @@
 import plotly
 
+
 def add_metric(aggregated_metrics, model_result, testset, metric_name, metric_key):
     values = aggregated_metrics[metric_name]
     new_values = model_result[testset]["aggregated"][metric_key]
