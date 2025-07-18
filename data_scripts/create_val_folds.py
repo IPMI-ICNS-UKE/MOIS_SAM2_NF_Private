@@ -1,6 +1,7 @@
 import os
 import shutil
 
+
 # Define base paths
 base_dir = "/home/gkolokolnikov/PhD_project/nf_segmentation_interactive/NFInteractiveSegmentationBenchmarking/data"
 raw_images_dir = os.path.join(base_dir, "raw/imagesTr")
