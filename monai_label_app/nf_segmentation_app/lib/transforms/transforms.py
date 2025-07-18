@@ -16,8 +16,6 @@ from monai.utils.enums import TransformBackends
 
 import logging
 from typing import Optional, Sequence, Union, Mapping, Hashable
-from collections import OrderedDict
-from scipy.ndimage import binary_dilation
 import nibabel as nib
 import numpy as np
 import torch
@@ -30,6 +28,7 @@ from monai.config.type_definitions import NdarrayOrTensor
 
 logger = logging.getLogger("evaluation_pipeline_logger")
 LABELS_KEY = "label_names"
+
 
 class ScaleIntensityRangePercentilesIgnoreZero(Transform):
     """
@@ -215,9 +214,15 @@ class ReorientToOriginald(MapTransform):
             meta["affine"] = meta_dict.get("original_affine")
         return d
 
-
-
 class TransformPointsd(MapTransform):
+    """
+    A MONAI MapTransform that adjusts point coordinates (e.g., foreground/background clicks)
+    according to image orientation and flipping operations applied during preprocessing.
+    It ensures spatial alignment of interaction points with the transformed image tensor.
+
+    Args:
+        MapTransform (_type_): _description_
+    """
     def __init__(
         self,
         keys: KeysCollection,
@@ -225,6 +230,13 @@ class TransformPointsd(MapTransform):
         orientation: str = "SRA",  # Target orientation
         flip_axes: list[int] = [0, 1],
     ):
+        """
+        Args:
+            keys: List of keys in the input dict to apply the transform to (e.g., ['foreground', 'background']).
+            ref_image_key: Key for the reference image whose metadata guides the transformation.
+            orientation: Target orientation code (e.g., 'SRA') for spatial normalization.
+            flip_axes: Axes (0: Z, 1: Y, 2: X) that were flipped during preprocessing.
+        """
         super().__init__(keys)
         self.ref_image_key = ref_image_key
         self.orientation = orientation
@@ -233,25 +245,18 @@ class TransformPointsd(MapTransform):
     def __call__(self, data):
         d = dict(data)
         img = d[self.ref_image_key]
-        print("LABEL"*10)
-        print(img)
         meta = img.meta if hasattr(img, "meta") else img.get("meta", {})
 
         orig_affine = meta.get("original_affine", meta.get("affine", None))
         spatial_shape = np.array(meta["spatial_shape"])  # shape: (X, Y, Z)
-        shape_dict = dict(zip(["x", "y", "z"], spatial_shape))
 
         # Build orientation transform
         orig_ornt = nib.aff2axcodes(orig_affine)
         tgt_ornt = tuple(self.orientation)
         ornt_transform = nib.orientations.ornt_transform(
             nib.orientations.axcodes2ornt(orig_ornt),
-            nib.orientations.axcodes2ornt(tgt_ornt)
-        )
-
-        # Example: [[1, -1], [0, 1], [2, -1]]
+            nib.orientations.axcodes2ornt(tgt_ornt))
         axes = ornt_transform[:, 0].astype(int)
-        flips = ornt_transform[:, 1].astype(int)
 
         for key in self.keys:
             transformed = []

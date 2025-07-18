@@ -1,20 +1,13 @@
 from typing import Callable, Sequence, Union, Any
-from tqdm import tqdm
 from time import time
 import logging
 import copy
-import os
 import torch
 from scipy.ndimage import label as cc_label
 import numpy as np
-from PIL import Image
-import pylab
-from hydra import initialize_config_dir
-from hydra.core.global_hydra import GlobalHydra
 
 from monai.data.meta_tensor import MetaTensor
 from monai.inferers import Inferer, SimpleInferer
-from monai.utils import set_determinism
 from monai.transforms import (
     LoadImaged,
     EnsureChannelFirstd,
@@ -26,21 +19,26 @@ from monai.transforms import (
 )
 from monailabel.interfaces.tasks.infer_v2 import InferType
 from monailabel.tasks.infer.basic_infer import BasicInferTask
-from monailabel.utils.others.generic import (
-    get_basename_no_ext,
-    md5_digest,
-    name_to_device,
-    strtobool,
-)
-from sam2.build_mois_sam import build_mois_sam2_predictor
-from lib.cache_logic.cache_logic import ImageCache
-from lib.transforms.transforms import (ScaleIntensityRangePercentilesIgnoreZerod,
-                                       ReorientToOriginald,
+from lib.transforms.transforms import (ReorientToOriginald,
                                        TransformPointsd)
 
 logger = logging.getLogger(__name__)
 
+
 class RemovePropagationComponent(BasicInferTask):
+    """
+    Task for removing unwanted connected components in propagated label masks,
+    typically after automatic segmentation.
+
+    Args:
+        path (str): Path to model weights (not used, inherited from BasicInferTask).
+        network: Optional network object (not used here).
+        type (InferType): MONAI label inference type (typically DEEPGROW).
+        labels (list): List of label names.
+        dimension (int): Input dimension (3D).
+        orientation (tuple): Orientation for loading image.
+        description (str): Description for logging/UI.
+    """
     def __init__(
         self,
         path,
@@ -63,56 +61,58 @@ class RemovePropagationComponent(BasicInferTask):
         )
         self.orientation = orientation
 
-
     def pre_transforms(self, data=None) -> Sequence[Callable]: 
+        """Define the sequence of preprocessing transforms for input data."""
         transforms = [
-            LoadImaged(keys=["label"], reader="ITKReader"),
-            EnsureChannelFirstd(keys=["label"]),
-            Orientationd(keys=["label"], axcodes=self.orientation),
+            LoadImaged(keys=["label_mask"], reader="ITKReader"),
+            EnsureChannelFirstd(keys=["label_mask"]),
+            Orientationd(keys=["label_mask"], axcodes=self.orientation),
             TransformPointsd(keys=["foreground", "background"], 
-                            ref_image_key="label", 
+                            ref_image_key="label_mask", 
                             orientation=self.orientation, 
                             flip_axes=[0, 1]),
-            Flipd(["label"], spatial_axis=0),
-            Flipd(["label"], spatial_axis=1),
-            SqueezeDimd(keys="label", dim=0),
+            Flipd(["label_mask"], spatial_axis=0),
+            Flipd(["label_mask"], spatial_axis=1),
+            SqueezeDimd(keys="label_mask", dim=0),
         ]
         self.add_cache_transform(transforms, data)
-        transforms.append(EnsureTyped(keys=["label"], device="cpu"))
+        transforms.append(EnsureTyped(keys=["label_mask"], device="cpu"))
         return transforms
     
     def inferer(self, data=None) -> Inferer:
-        """
-        Define the inference method using sliding window inference.
-
-        Args:
-            data (dict): Input data dictionary.
-
-        Returns:
-            Inferer: SlidingWindowInferer object with configured parameters.
-        """
+        """Define the inference method."""
         return SimpleInferer()
 
     def inverse_transforms(self, data=None) -> Union[None, Sequence[Callable]]:
-        """
-        Run all applicable pre-transforms which has inverse method.
-        """
+        """Run no pre-transforms in reverse mode."""
         return None
     
     def post_transforms(self, data=None) -> Sequence[Callable]:
+        """Define the sequence of postprocessing transforms applied to predictions."""
         transforms = [
             EnsureTyped(keys="pred", device="cuda"),
             EnsureChannelFirstd(keys=["pred"]),
-            Flipd(["label"], spatial_axis=1),
-            Flipd(["label"], spatial_axis=0),
-            ReorientToOriginald(keys="pred", ref_image="label"),
+            Flipd(["label_mask"], spatial_axis=1),
+            Flipd(["label_mask"], spatial_axis=0),
+            ReorientToOriginald(keys="pred", ref_image="label_mask"),
             SqueezeDimd(keys="pred", dim=0),
             ToNumpyd(keys="pred"),
         ]
         return transforms
     
     def remove_propagation_components(self, data, convert_to_batch=True, device="cuda"):
-        label_mask_tensor = data["label"]
+        """
+        Remove connected components that intersect with user-provided background points.
+
+        Args:
+            data (dict): Dictionary containing label_mask and background points.
+            convert_to_batch (bool): Unused here.
+            device (str): Device to place final prediction (default: 'cuda').
+
+        Returns:
+            dict: Updated data with cleaned prediction in `data["pred"]`.
+        """
+        label_mask_tensor = data["label_mask"]
         
         label_mask = label_mask_tensor.cpu().numpy().astype(np.uint8)
         cleaned_mask = np.copy(label_mask)
@@ -125,9 +125,6 @@ class RemovePropagationComponent(BasicInferTask):
             else:
                 bps[sid] = [(p[0], p[1])]
                 
-        print("POINT-1-"*10)
-        print(bps)
-
         for sid, points in bps.items():
             if sid < 0 or sid >= cleaned_mask.shape[2]:
                 continue
@@ -137,9 +134,7 @@ class RemovePropagationComponent(BasicInferTask):
 
             # Collect unique component IDs touched by any point
             cc_ids_to_remove = set()
-            print("1: ", points)
             for x, y in points:
-                print("Connected component: ", x, y, cc_mask[x, y])
                 cc_id = cc_mask[x, y]
                 if cc_id > 0:
                     cc_ids_to_remove.add(cc_id)
@@ -156,9 +151,8 @@ class RemovePropagationComponent(BasicInferTask):
         data["pred"] = pred
         return data
             
-        
-    
     def __call__(self, request):
+        """ Main inference call entrypoint."""
         request["save_label"] = True
         request["label_tag"] = "final"
         begin = time()
@@ -166,7 +160,6 @@ class RemovePropagationComponent(BasicInferTask):
         req.update(request)
         data = copy.deepcopy(req)
         
-        print(data)
         start = time()        
         pre_transforms = self.pre_transforms(data)
         data = self.run_pre_transforms(data, pre_transforms)
@@ -220,5 +213,3 @@ class RemovePropagationComponent(BasicInferTask):
     
     def writer(self, data, extension=None, dtype=None):
         return super().writer(data, extension=".nii.gz")
-    
-    

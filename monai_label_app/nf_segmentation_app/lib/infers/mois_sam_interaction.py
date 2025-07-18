@@ -43,7 +43,31 @@ logger = logging.getLogger(__name__)
 image_cache = ImageCache()
 image_cache.monitor()
 
+
 class MOISSAM_Interaction(BasicInferTask):
+    """
+    Interactive segmentation task using MOIS-SAM2. 
+    It supports multi-slice interactive image segmentation and uses forward/backward
+    memory-based propagation.
+
+    Args:
+        path (str): Path to model weights.
+        config_name (str): Name of configuration YAML file.
+        network: Optional initialized model (if not using path-based init).
+        type (InferType): Type of inference task.
+        labels (list): List of label names.
+        dimension (int): Dimensionality of the task (typically 3).
+        spacing (tuple): Desired spacing for image resampling.
+        orientation (tuple): Orientation code (e.g., 'SRA').
+        exemplar_num (int): Maximum number of exemplars to use.
+        exemplar_use_only_prompted (bool): Restrict exemplar memory to user-provided prompts.
+        filter_prev_prediction_components (bool): Optionally remove spurious previous predictions.
+        overlap_threshold (float): Threshold for region overlap filtering.
+        use_low_res_masks_for_com_detection (bool): Use low-res masks to determine center-of-mass.
+        default_image_size (int): Default image size used by the model.
+        min_lesion_area_threshold (int): Minimum area for considering lesion regions.
+        description (str): Description of this inference task.
+    """
     def __init__(
         self,
         path,
@@ -104,6 +128,7 @@ class MOISSAM_Interaction(BasicInferTask):
         self.inference_state = None
         
     def pre_transforms(self, data=None) -> Sequence[Callable]: 
+        """Define the sequence of preprocessing transforms for input data."""
         transforms = [
             LoadImaged(keys=["image"], reader="ITKReader"),
             EnsureChannelFirstd(keys=["image"]),
@@ -123,24 +148,15 @@ class MOISSAM_Interaction(BasicInferTask):
         return transforms
     
     def inferer(self, data=None) -> Inferer:
-        """
-        Define the inference method using sliding window inference.
-
-        Args:
-            data (dict): Input data dictionary.
-
-        Returns:
-            Inferer: SlidingWindowInferer object with configured parameters.
-        """
+        """Define the inference method."""
         return SimpleInferer()
 
     def inverse_transforms(self, data=None) -> Union[None, Sequence[Callable]]:
-        """
-        Run all applicable pre-transforms which has inverse method.
-        """
+        """Run no pre-transforms in reverse mode."""
         return None
     
     def post_transforms(self, data=None) -> Sequence[Callable]:
+        """Define the sequence of postprocessing transforms applied to predictions."""
         transforms = [
             EnsureTyped(keys="pred", device="cuda"),
             EnsureChannelFirstd(keys=["pred"]),
@@ -153,6 +169,10 @@ class MOISSAM_Interaction(BasicInferTask):
         return transforms
     
     def get_predictor(self):
+        """
+        Initialize and return the MOIS-SAM2 predictor. Caches per device.
+        Applies optimization settings for CUDA-capable GPUs.
+        """
         predictor = self.predictors.get(self.device)
         
         if predictor is None:
@@ -173,6 +193,7 @@ class MOISSAM_Interaction(BasicInferTask):
         return predictor   
 
     def move_to_cpu(self, obj):
+        """Recursively move tensors in nested structure to CPU."""
         if isinstance(obj, torch.Tensor):
             return obj.cpu()
         elif isinstance(obj, dict):
@@ -185,6 +206,7 @@ class MOISSAM_Interaction(BasicInferTask):
             return obj
     
     def move_to_device(self, obj, device):
+        """Recursively move tensors in nested structure to a given device."""
         if isinstance(obj, torch.Tensor):
             return obj.to(device)
         elif isinstance(obj, dict):
@@ -197,6 +219,24 @@ class MOISSAM_Interaction(BasicInferTask):
             return obj
     
     def run_inferer(self, image_tensor, set_image_state, request, data, debug=False):
+        """
+        Perform the main inference logic:
+        - Load/prepare video directory
+        - Restore or initialize inference state
+        - Run initial segmentation from user interactions
+        - Apply forward and backward propagation
+        - Merge outputs and update the data dictionary
+
+        Args:
+            image_tensor (MetaTensor): Input 3D image.
+            set_image_state (bool): Whether to reset model state.
+            request (dict): MONAI Label interaction request.
+            data (dict): Internal data state.
+            debug (bool): Save intermediate images for debugging.
+
+        Returns:
+            dict: Updated data with predicted mask and metadata.
+        """
         self.device = name_to_device(request.get("device", "cuda"))
         reset_state = strtobool(request.get("reset_state", "false"))
         
@@ -312,6 +352,7 @@ class MOISSAM_Interaction(BasicInferTask):
 
 
     def __call__(self, request):
+        """ Main inference call entrypoint."""
         request["save_label"] = True
         request["label_tag"] = "final"
         begin = time()

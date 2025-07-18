@@ -11,16 +11,51 @@ logger = logging.getLogger(__name__)
 
 
 class MOISSAM_Propagation3D(TaskConfig):
+    """
+        Task configuration for MOIS-SAM2 propagation model in 3D.
+
+        This task uses a propagation-based inference strategy for neurofibroma segmentation,
+        leveraging the exemplars.
+
+        Attributes:
+            path (str): Path to the model checkpoint file.
+            config_name (str): YAML configuration file for the network.
+            labels (dict): Mapping of label names to integer class IDs.
+            network (Any): Placeholder for the model network, loaded during inference.
+            dimension (int): Specifies the data dimensionality (3D).
+            spacing (tuple): Image spacing to be used for inference (-1 means use original).
+            orientation (tuple): Image orientation, e.g., ("SRA").
+            exemplar_num (int): Number of exemplars to keep in memory.
+            exemplar_use_only_prompted (bool): Whether to use only user-specified exemplars.
+            filter_prev_prediction_components (bool): Flag to filter disconnected predictions.
+            overlap_threshold (float): Overlap threshold for filtering predictions.
+            use_low_res_masks_for_com_detection (bool): Use downsampled masks to detect centers of mass.
+            default_image_size (int): Default image size for input resizing.
+            min_lesion_area_threshold (int): Minimum area (in pixels) to consider a region as a lesion.
+        """
     def init(self, name: str, model_dir: str, conf: Dict[str, str], planner: Any, **kwargs):
+        """
+        Initialize the propagation task configuration.
+
+        Args:
+            name (str): Task name.
+            model_dir (str): Path to the directory containing model files.
+            conf (dict): Dictionary of configuration parameters.
+            planner (Any): Task planner object.
+            **kwargs: Additional keyword arguments.
+        """
         super().init(name, model_dir, conf, planner, **kwargs)
         
         # Parameters of the MOIS-SAM2 interactive model
+        # Only one foreground class: propagated neurofibromas
         self.labels = {"background": 0, "propagated_neurofibromas": 1}
-            
+        
+        # Model checkpoint and configuration
         self.path = os.path.join(self.model_dir, "MOIS_SAM2", "checkpoint.pt")
         self.config_name = "mois_sam2.1_hiera_b+.yaml"
         
-        self.network = None # The MOIS-SAM2 model is loaded in the inferer
+         # Model and inference configuration
+        self.network = None # Will be instantiated in the inferer
         self.dimension=3
         self.spacing=(-1, -1, -1)
         self.orientation=("SRA")
@@ -35,6 +70,12 @@ class MOISSAM_Propagation3D(TaskConfig):
         logger.info("Initialized MOISSAM_Propagation3D")
     
     def infer(self) -> Union[InferTask, Dict[str, InferTask]]:
+        """
+        Create and return the inference task for propagation.
+
+        Returns:
+            dict: Dictionary mapping task name to MOISSAM_Propagation inferer instance.
+        """
         inferer = lib.infers.mois_sam_propagation.MOISSAM_Propagation(
             path=self.path,
             config_name=self.config_name,

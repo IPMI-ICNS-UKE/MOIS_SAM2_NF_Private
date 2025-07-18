@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 from typing import Dict
@@ -9,13 +8,8 @@ from monailabel.utils.others.class_utils import get_class_names
 from monailabel.interfaces.config import TaskConfig
 from monailabel.interfaces.datastore import Datastore
 from monailabel.interfaces.tasks.infer_v2 import InferTask
-from monailabel.interfaces.tasks.strategy import Strategy
 from monailabel.interfaces.tasks.train import TrainTask
-from monailabel.interfaces.exception import MONAILabelError, MONAILabelException
-from monailabel.utils.others.generic import handle_torch_linalg_multithread
-from monailabel.interfaces.datastore import Datastore, DefaultLabelTag
-from monailabel.config import settings
-
+from monailabel.interfaces.datastore import Datastore
 import lib.configs
 
 logger = logging.getLogger(__name__)
@@ -23,7 +17,11 @@ logger = logging.getLogger(__name__)
 
 class NFSegmentationApp(MONAILabelApp):
     '''
-    ToDo: add documentation
+     MONAI Label Application for Interactive Neurofibroma Segmentation in Whole-Body MRI.
+     The app uses multi-object interactive segmentation SAM2 model (MOIS-SAM2) and operated in two modes:
+        
+        - Interactive segmentation based on user prompts (negative and positive points).
+        - Automatic segmentation based on semantic propagation of already segmented lesions.
     '''
     def __init__(self, app_dir, studies, conf):
         self.model_dir = os.path.join(app_dir, "model")
@@ -35,9 +33,6 @@ class NFSegmentationApp(MONAILabelApp):
 
         configs = {k: v for k, v in sorted(configs.items())}
         
-        
-
-
         # Load models from app model implementation, e.g., --conf models <segmentation_spleen>
         models = conf.get("models")
         if not models:

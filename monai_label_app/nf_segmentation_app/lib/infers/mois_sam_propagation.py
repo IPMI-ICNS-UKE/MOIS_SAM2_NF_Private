@@ -1,4 +1,4 @@
-from typing import Callable, Sequence, Union, Any
+from typing import Callable, Sequence, Union
 from tqdm import tqdm
 from time import time
 import logging
@@ -34,8 +34,7 @@ from monailabel.utils.others.generic import (
 from sam2.build_mois_sam import build_mois_sam2_predictor
 from lib.cache_logic.cache_logic import ImageCache
 from lib.transforms.transforms import (ScaleIntensityRangePercentilesIgnoreZerod,
-                                       ReorientToOriginald,
-                                       TransformPointsd)
+                                       ReorientToOriginald)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +43,27 @@ image_cache = ImageCache()
 image_cache.monitor()
 
 class MOISSAM_Propagation(BasicInferTask):
+    """
+    MOIS-SAM2 propagation task for automatic multi-slice segmentation using saved exemplars.
+
+    Args:
+        path (str): Path to model weights.
+        config_name (str): Path to configuration YAML file.
+        network: Optional initialized model.
+        type (InferType): MONAI Label inference type.
+        labels (list): List of segmentation label names.
+        dimension (int): Dimensionality (3D).
+        spacing (tuple): Target spacing for resampling.
+        orientation (tuple): Orientation codes (e.g., 'SRA').
+        exemplar_num (int): Maximum number of exemplars.
+        exemplar_use_only_prompted (bool): Restrict exemplars to prompted inputs.
+        filter_prev_prediction_components (bool): Remove spurious components.
+        overlap_threshold (float): IoU threshold for filtering.
+        use_low_res_masks_for_com_detection (bool): Enable low-res center-of-mass detection.
+        default_image_size (int): Default input size to network.
+        min_lesion_area_threshold (int): Minimum lesion area to retain.
+        description (str): Description for the task.
+    """
     def __init__(
         self,
         path,
@@ -104,6 +124,7 @@ class MOISSAM_Propagation(BasicInferTask):
         self.inference_state = None
         
     def pre_transforms(self, data=None) -> Sequence[Callable]: 
+        """Define preprocessing pipeline for input image."""
         transforms = [
             LoadImaged(keys=["image"], reader="ITKReader"),
             EnsureChannelFirstd(keys=["image"]),
@@ -119,24 +140,16 @@ class MOISSAM_Propagation(BasicInferTask):
         return transforms
     
     def inferer(self, data=None) -> Inferer:
-        """
-        Define the inference method using sliding window inference.
-
-        Args:
-            data (dict): Input data dictionary.
-
-        Returns:
-            Inferer: SlidingWindowInferer object with configured parameters.
-        """
+        """Define the inference method."""
         return SimpleInferer()
 
     def inverse_transforms(self, data=None) -> Union[None, Sequence[Callable]]:
-        """
-        Run all applicable pre-transforms which has inverse method.
-        """
+        """Run no pre-transforms in reverse mode."""
+
         return None
     
     def post_transforms(self, data=None) -> Sequence[Callable]:
+        """Define the sequence of postprocessing transforms applied to predictions."""
         transforms = [
             EnsureTyped(keys="pred", device="cuda"),
             EnsureChannelFirstd(keys=["pred"]),
@@ -149,6 +162,10 @@ class MOISSAM_Propagation(BasicInferTask):
         return transforms
     
     def get_predictor(self):
+        """
+        Initialize and return the MOIS-SAM2 predictor. Caches per device.
+        Applies optimization settings for CUDA-capable GPUs.
+        """
         predictor = self.predictors.get(self.device)
         
         if predictor is None:
@@ -169,6 +186,7 @@ class MOISSAM_Propagation(BasicInferTask):
         return predictor
     
     def move_to_device(self, obj, device):
+        """Recursively move tensors in nested structure to a given device."""
         if isinstance(obj, torch.Tensor):
             return obj.to(device)
         elif isinstance(obj, dict):
@@ -181,6 +199,22 @@ class MOISSAM_Propagation(BasicInferTask):
             return obj
     
     def run_inferer(self, image_tensor, set_image_state, request, data, debug=False):
+        """
+        Main propagation logic:
+        - Prepares video directory and restores saved exemplars
+        - Performs semantic segmentation slice-by-slice
+          using stored exemplar memory
+
+        Args:
+            image_tensor (MetaTensor): 3D image tensor.
+            set_image_state (bool): Reset inference state if True.
+            request (dict): Input request from MONAI Label.
+            data (dict): Input data dict.
+            debug (bool): If True, save intermediate slice images.
+
+        Returns:
+            dict: Updated data with predicted segmentation.
+        """
         self.device = name_to_device(request.get("device", "cuda"))
         reset_state = strtobool(request.get("reset_state", "false"))
         
@@ -245,6 +279,7 @@ class MOISSAM_Propagation(BasicInferTask):
 
 
     def __call__(self, request):
+        """ Main inference call entrypoint."""
         request["save_label"] = True
         request["label_tag"] = "final"
         begin = time()
