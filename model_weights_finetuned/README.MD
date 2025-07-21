@@ -37,7 +37,7 @@ The user should place only the selected final model weights in this directory, a
 │
 ├── VISTA/                       # Fine-tuned VISTA3D model weights
 │   ├── fold_1/
-│   │   └── model.pt        # Final selected checkpoint for fold 1
+│   │   └── model.pt             # Final selected checkpoint for fold 1
 │   ├── fold_2/
 │   │   └── model.pt
 │   ├── fold_3/
