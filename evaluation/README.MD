@@ -33,6 +33,8 @@ The following interactive segmentation models are supported:
 - **DINs** (Deep Interactive Networks)
 - **SW-FastEdit** (Sliding Window FastEdit)
 - **SAM2** (Segment Anything Model v2)
+- **VISTA3D** (Versatile Imaging Segmentation and Annotation in 3D)
+- **MOIS-SAM2** (Multi-Object Interactive Segmentation extenstion of SAM2)
 
 # Running Evaluations
 
