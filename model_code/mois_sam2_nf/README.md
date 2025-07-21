@@ -52,7 +52,7 @@ This repository extends the [Segment Anything Model 2 (SAM2)](https://github.com
 
 ## Original SAM2 Documentation
 
-The original SAM2 documentation from Meta AI is available in [`SAM2_README_ORIGINAL.md`](SAM2_README_ORIGINAL.md).
+The original SAM2 documentation from Meta AI is available in [`README_ORIGINAL.md`](README_ORIGINAL.md).
 
 Please refer to it for general usage of SAM2.
 
