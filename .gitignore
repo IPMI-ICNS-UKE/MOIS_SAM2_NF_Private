@@ -172,6 +172,8 @@ cython_debug/
 
 # Ignore project-specific instances
 data/raw/*
+data/pics
+data/numpy
 !data/raw/README.MD
 data/processed/*
 !data/processed/README.MD
@@ -196,6 +198,7 @@ evaluation/results/scripts/output
 evaluation/results/used_as_illustrations/output
 !evaluation/results/metrics/README.MD
 evaluation/results/predictions/*
+evaluation/results/materials_aime
 !evaluation/results/predictions/README.MD
 !evaluation/results/README.MD
 !evaluation/results/*.py
