@@ -38,10 +38,10 @@ The figure below presents qualitative comparison of segmentation results from MO
 
 The key directories of this repository:
 
-- model_code/mois_sam2_nf/ – Code of the Multi-Object Interacactive Segmentation extension of SAM2 (model, training and inference logic).
-- launchers/ – Launcher scripts for fine-tuning the benchmarking models, e.g., DINs, SW-FastEdit, SAM2.
-- evaluation/ – Evaluation pipeline for interactive segmentation models.
-- monai_label_app/ – Proposed MOIS-SAM2 model integrated into MONAI Label App, so that it can be used within 3D Slicer.
+- `model_code/mois_sam2_nf/` – Code of the Multi-Object Interacactive Segmentation extension of SAM2 (model, training and inference logic).
+- `launchers/` – Launcher scripts for fine-tuning the benchmarking models, e.g., DINs, SW-FastEdit, SAM2.
+- `evaluation/` – Evaluation pipeline for interactive segmentation models.
+- `monai_label_app/` – Proposed MOIS-SAM2 model integrated into MONAI Label App, so that it can be used within 3D Slicer.
 
 ---
 
@@ -66,7 +66,7 @@ conda activate nf_iseg_benchmark_torch
 ```
 Then install **SAM2**:
 ```bash
-cd model_code/sam2_Neurofibroma
+cd model_code/mois_sam2_nf
 pip install -e .
 pip install -e ".[dev]"
 ```
