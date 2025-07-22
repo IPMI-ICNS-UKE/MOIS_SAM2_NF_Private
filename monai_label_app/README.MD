@@ -90,12 +90,12 @@ The pipeline provides the following interactive segmentation modes:
      <img src="assets/step_4.png" alt="step_4">
    </p>
    </details>
-5. After annotating 5-10 lesions, launch exemplar-based semantic propagation to segment all neurofibromas in the scan.<summary>Expand for visual instructions</summary>
+5. After annotating 5-10 lesions, launch exemplar-based semantic propagation to segment all neurofibromas in the scan.<details> <summary>Expand for visual instructions</summary>
    <p>
      <img src="assets/step_5.png" alt="step_5">
    </p>
    </details>
-6. If the propagated segmentation has false positives, activate propagation component removal tool, choose the label for  **propagated neurofibromas**, activate the background click mode, and remove false positive components slice-by-slice. <summary>Expand for visual instructions</summary>
+6. If the propagated segmentation has false positives, activate propagation component removal tool, choose the label for  **propagated neurofibromas**, activate the background click mode, and remove false positive components slice-by-slice. <details> <summary>Expand for visual instructions</summary>
    <p>
      <img src="assets/step_6.png" alt="step_6">
    </p>
